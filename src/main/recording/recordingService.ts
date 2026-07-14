@@ -241,6 +241,9 @@ export class RecordingService {
         if (pendingSize < part.byteCount) {
           throw new Error(`Recording part ${part.partIndex} is shorter than its manifest`)
         }
+        if (pendingSize > part.byteCount) {
+          await this.truncateAndSync(pending, part.byteCount)
+        }
         continue
       }
       if (completedSize === null) {
@@ -251,13 +254,7 @@ export class RecordingService {
       }
       await rename(completed, pending)
       if (completedSize > part.byteCount) {
-        const handle = await open(pending, 'r+')
-        try {
-          await handle.truncate(part.byteCount)
-          await handle.sync()
-        } finally {
-          await handle.close()
-        }
+        await this.truncateAndSync(pending, part.byteCount)
       }
     }
   }
@@ -299,6 +296,16 @@ export class RecordingService {
         return null
       }
       throw error
+    }
+  }
+
+  private async truncateAndSync(path: string, byteCount: number): Promise<void> {
+    const handle = await open(path, 'r+')
+    try {
+      await handle.truncate(byteCount)
+      await handle.sync()
+    } finally {
+      await handle.close()
     }
   }
 

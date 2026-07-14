@@ -287,6 +287,49 @@ describe('RecordingService', () => {
     }
   })
 
+  it('truncates a synced pending tail not committed by the manifest before stop', async () => {
+    const harness = createHarness()
+    mkdirSync(harness.recordingsDirectory, { recursive: true })
+    const pending = pendingPartPath(harness.recordingsDirectory, 'meeting-1', 0)
+    writeFileSync(pending, Buffer.from([1, 2, 8, 9]), { flag: 'w' })
+    await writeSessionManifest(harness.recordingsDirectory, {
+      version: 1,
+      meetingId: 'meeting-1',
+      activePartIndex: 0,
+      totalBytes: 2,
+      durationMs: 1_000,
+      parts: [
+        {
+          partIndex: 0,
+          lastChunkIndex: 0,
+          byteCount: 2,
+          durationMs: 1_000,
+          completed: false,
+        },
+      ],
+    })
+    harness.repository.updateRecordingProgress('meeting-1', 2, 1_000)
+
+    const reopened = new RecordingService(harness.repository, harness.recordingsDirectory)
+    try {
+      await reopened.start('meeting-1')
+      expect(readFileSync(pending)).toEqual(Buffer.from([1, 2]))
+
+      await reopened.stop('meeting-1')
+
+      const completed = completedPartPath(harness.recordingsDirectory, 'meeting-1', 0)
+      expect(readFileSync(completed)).toEqual(Buffer.from([1, 2]))
+      expect(harness.repository.requireById('meeting-1')).toMatchObject({
+        status: 'recorded',
+        audioPath: basename(completed),
+        audioByteCount: 2,
+      })
+    } finally {
+      await reopened.close()
+      harness.database.close()
+    }
+  })
+
   it('accepts retry of the exact chunk that triggered rollover without duplicating bytes', async () => {
     const harness = createHarness()
     await harness.service.start('meeting-1')
