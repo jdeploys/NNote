@@ -10,6 +10,7 @@ import {
 } from './recordingPaths'
 import {
   createSessionManifest,
+  isFinalizedSessionManifest,
   readSessionManifest,
   writeSessionManifest,
   type RecordingPartManifest,
@@ -36,6 +37,18 @@ export class RecordingService {
   ) {}
 
   async start(meetingId: string): Promise<RecordingProgress> {
+    return this.startInternal(meetingId, false)
+  }
+
+  async keepRecoveredAsFile(meetingId: string): Promise<void> {
+    await this.startInternal(meetingId, true)
+    await this.stop(meetingId)
+  }
+
+  private async startInternal(
+    meetingId: string,
+    allowFinalizedRecoveryDecision: boolean,
+  ): Promise<RecordingProgress> {
     const meeting = this.meetings.requireById(meetingId)
     if (meeting.status !== 'recording' && meeting.status !== 'recoverable') {
       throw new Error(`Meeting ${meetingId} is not available for recording`)
@@ -46,6 +59,9 @@ export class RecordingService {
       manifest = createSessionManifest(meetingId)
       await writeSessionManifest(this.recordingsDirectory, manifest)
     } else {
+      if (isFinalizedSessionManifest(manifest) && !allowFinalizedRecoveryDecision) {
+        throw new Error('A finalized recording requires an explicit recovery decision')
+      }
       await this.reconcilePartFiles(manifest)
     }
     this.sessions.set(meetingId, manifest)

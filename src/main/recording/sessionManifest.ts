@@ -32,6 +32,14 @@ export function createSessionManifest(meetingId: string): SessionManifest {
   }
 }
 
+export function isFinalizedSessionManifest(manifest: SessionManifest): boolean {
+  if (manifest.finalized !== undefined) return manifest.finalized
+  if (manifest.parts.length === 0 || !manifest.parts.every(({ completed }) => completed)) {
+    return false
+  }
+  return manifest.activePartIndex === manifest.parts.length - 1
+}
+
 function assertNonNegativeInteger(value: unknown, field: string): asserts value is number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     throw new Error(`Invalid recording manifest ${field}`)
@@ -86,7 +94,7 @@ function parseSessionManifest(value: unknown, meetingId: string): SessionManifes
     activePartIndex: manifest.activePartIndex,
     totalBytes: manifest.totalBytes,
     durationMs: manifest.durationMs,
-    finalized: manifest.finalized === true,
+    finalized: manifest.finalized as boolean | undefined,
     parts,
   }
 }

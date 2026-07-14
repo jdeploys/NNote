@@ -11,7 +11,11 @@ import {
   temporaryManifestPath,
 } from './recordingPaths'
 import type { RecordingService } from './recordingService'
-import { readSessionManifest, type SessionManifest } from './sessionManifest'
+import {
+  isFinalizedSessionManifest,
+  readSessionManifest,
+  type SessionManifest,
+} from './sessionManifest'
 
 type RecoveryKind = RecoveryItem['kind']
 
@@ -76,8 +80,7 @@ export class RecoveryService {
     }
     const inspection = await this.inspect(meetingId)
     if (inspection.kind === 'exportOnly') throw new Error('This recording is export-only')
-    await this.recording.start(meetingId)
-    await this.recording.stop(meetingId)
+    await this.recording.keepRecoveredAsFile(meetingId)
     this.inspected.delete(meetingId)
   }
 
@@ -110,7 +113,9 @@ export class RecoveryService {
       const manifest = await readSessionManifest(this.recordingsDirectory, meetingId)
       if (manifest === null) return { kind: 'exportOnly', byteCount: await this.preservedByteCount(meetingId) }
       await this.assertReconciliable(manifest)
-      const kind: RecoveryKind = manifest.finalized === true ? 'finalizeOnly' : 'recoverable'
+      const kind: RecoveryKind = isFinalizedSessionManifest(manifest)
+        ? 'finalizeOnly'
+        : 'recoverable'
       return { kind, byteCount: manifest.totalBytes, durationMs: manifest.durationMs }
     } catch {
       return { kind: 'exportOnly', byteCount: await this.preservedByteCount(meetingId) }
@@ -171,13 +176,13 @@ export class RecoveryService {
       const lastIndex = manifest.parts.length - 1
       const expectedActive = foundIncomplete ? lastIndex : manifest.parts.length
       const finalizedActiveIsValid =
-        manifest.finalized === true &&
+        isFinalizedSessionManifest(manifest) &&
         manifest.parts.every(({ completed }) => completed) &&
         (manifest.activePartIndex === lastIndex || manifest.activePartIndex === manifest.parts.length)
       if (manifest.activePartIndex !== expectedActive && !finalizedActiveIsValid) {
         throw new Error('Active recording cursor is incoherent')
       }
-      if (manifest.finalized === true && foundIncomplete) {
+      if (isFinalizedSessionManifest(manifest) && foundIncomplete) {
         throw new Error('Finalized recording contains an incomplete part')
       }
     }

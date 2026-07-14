@@ -54,6 +54,31 @@ afterEach(() => {
 })
 
 describe('RecordingService', () => {
+  it('starts a legitimate recoverable manifest while rejecting a finalized one', async () => {
+    const resumable = createHarness('resumable')
+    resumable.repository.transitionRecordingStatus('resumable', 'recoverable')
+    await expect(resumable.service.start('resumable')).resolves.toMatchObject({ nextChunkIndex: 0 })
+    await resumable.service.close()
+    resumable.database.close()
+
+    const finalized = createHarness('finalized')
+    mkdirSync(finalized.recordingsDirectory, { recursive: true })
+    const completed = completedPartPath(finalized.recordingsDirectory, 'finalized', 0)
+    writeFileSync(completed, Buffer.from([1]))
+    writeFileSync(manifestPath(finalized.recordingsDirectory, 'finalized'), JSON.stringify({
+      version: 1, meetingId: 'finalized', activePartIndex: 0, totalBytes: 1, durationMs: 1_000,
+      finalized: true,
+      parts: [{ partIndex: 0, lastChunkIndex: 0, byteCount: 1, durationMs: 1_000, completed: true }],
+    }))
+    finalized.repository.updateRecordingProgress('finalized', 1, 1_000)
+    finalized.repository.transitionRecordingStatus('finalized', 'recoverable')
+
+    await expect(finalized.service.start('finalized')).rejects.toThrow(/finalized.*recovery decision/i)
+    expect(readFileSync(completed)).toEqual(Buffer.from([1]))
+    await finalized.service.close()
+    finalized.database.close()
+  })
+
   it('appends ordered chunks and preserves them across service reopen', async () => {
     const harness = createHarness()
     await harness.service.start('meeting-1')

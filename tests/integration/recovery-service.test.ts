@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openDatabase } from '../../src/main/db/database'
 import { MeetingRepository } from '../../src/main/db/meetingRepository'
+import { registerRecordingHandlers } from '../../src/main/ipc/registerRecordingHandlers'
 import { completedPartPath, manifestPath, pendingPartPath } from '../../src/main/recording/recordingPaths'
 import { RecordingService } from '../../src/main/recording/recordingService'
 import { RecoveryService } from '../../src/main/recording/recoveryService'
@@ -124,12 +125,56 @@ describe('RecoveryService', () => {
     expect(await h.recovery.scan()).toEqual([
       expect.objectContaining({ meetingId: 'stop-crash', kind: 'finalizeOnly' }),
     ])
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    registerRecordingHandlers(
+      { handle: (channel, listener) => handlers.set(channel, listener) },
+      h.recording,
+    )
+    await expect(
+      Promise.resolve().then(() => handlers.get('recording:start')!({}, 'stop-crash')),
+    ).rejects.toThrow(/finalized.*recovery decision/i)
+    expect(readFileSync(completed)).toEqual(Buffer.from([2, 4, 6]))
     await expect(h.recovery.recover('stop-crash')).rejects.toThrow(/cannot be resumed/i)
     await h.recovery.keepAsFile('stop-crash')
 
     expect(h.meetings.requireById('stop-crash').status).toBe('recorded')
     expect(readFileSync(completed)).toEqual(Buffer.from([2, 4, 6]))
     await expect(stat(pendingPartPath(h.recordings, 'stop-crash', 0))).rejects.toMatchObject({ code: 'ENOENT' })
+    h.database.close()
+  })
+
+  it('classifies a legacy all-completed last-index cursor as finalization-only', async () => {
+    const h = harness()
+    h.meetings.create(meeting('legacy-stop', 'recording'))
+    const completed = completedPartPath(h.recordings, 'legacy-stop', 0)
+    writeFileSync(completed, Buffer.from([3, 3]))
+    writeFileSync(manifestPath(h.recordings, 'legacy-stop'), JSON.stringify({
+      version: 1, meetingId: 'legacy-stop', activePartIndex: 0, totalBytes: 2, durationMs: 1_000,
+      parts: [{ partIndex: 0, lastChunkIndex: 0, byteCount: 2, durationMs: 1_000, completed: true }],
+    }))
+
+    expect(await h.recovery.scan()).toEqual([
+      expect.objectContaining({ meetingId: 'legacy-stop', kind: 'finalizeOnly', byteCount: 2 }),
+    ])
+    await expect(h.recording.start('legacy-stop')).rejects.toThrow(/finalized.*recovery decision/i)
+    expect(readFileSync(completed)).toEqual(Buffer.from([3, 3]))
+    h.database.close()
+  })
+
+  it('keeps a legacy all-completed next-index rollover cursor resumable', async () => {
+    const h = harness()
+    h.meetings.create(meeting('legacy-rollover', 'recording'))
+    writeFileSync(completedPartPath(h.recordings, 'legacy-rollover', 0), Buffer.from([5, 5]))
+    writeFileSync(manifestPath(h.recordings, 'legacy-rollover'), JSON.stringify({
+      version: 1, meetingId: 'legacy-rollover', activePartIndex: 1, totalBytes: 2, durationMs: 1_000,
+      parts: [{ partIndex: 0, lastChunkIndex: 0, byteCount: 2, durationMs: 1_000, completed: true }],
+    }))
+
+    expect(await h.recovery.scan()).toEqual([
+      expect.objectContaining({ meetingId: 'legacy-rollover', kind: 'recoverable', byteCount: 2 }),
+    ])
+    expect(await h.recovery.recover('legacy-rollover')).toMatchObject({ activePartIndex: 1, nextChunkIndex: 0 })
+    await h.recording.close()
     h.database.close()
   })
 
