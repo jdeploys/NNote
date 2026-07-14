@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openDatabase } from '../../src/main/db/database'
 import { MeetingRepository } from '../../src/main/db/meetingRepository'
@@ -12,11 +12,12 @@ import {
 } from '../../src/main/recording/recordingPaths'
 import { RecordingService } from '../../src/main/recording/recordingService'
 import { RECORDING_PART_LIMIT_BYTES } from '../../src/main/recording/recordingTypes'
+import { writeSessionManifest } from '../../src/main/recording/sessionManifest'
 import type { Meeting } from '../../src/shared/contracts/meeting'
 
 const directories: string[] = []
 
-function createHarness() {
+function createHarness(meetingId = 'meeting-1') {
   const root = mkdtempSync(join(tmpdir(), 'nnote-recording-'))
   directories.push(root)
   const databasePath = join(root, 'nnote.sqlite')
@@ -24,7 +25,7 @@ function createHarness() {
   const database = openDatabase(databasePath)
   const repository = new MeetingRepository(database)
   const meeting: Meeting = {
-    id: 'meeting-1',
+    id: meetingId,
     title: 'Crash-safe recording',
     createdAt: '2026-07-14T12:00:00.000Z',
     updatedAt: '2026-07-14T12:00:00.000Z',
@@ -229,6 +230,7 @@ describe('RecordingService', () => {
     expect(rolled.rolledToPartIndex).toBe(1)
     expect(nextPart).toMatchObject({
       totalBytes: RECORDING_PART_LIMIT_BYTES + 1,
+      warn: false,
       rolledToPartIndex: null,
     })
     expect(readFileSync(completedPartPath(harness.recordingsDirectory, 'meeting-1', 0))).toHaveLength(
@@ -239,5 +241,93 @@ describe('RecordingService', () => {
     )
     await harness.service.close()
     harness.database.close()
+  })
+
+  it('recovers a completed manifest whose WebM is still pending before stop', async () => {
+    const harness = createHarness()
+    mkdirSync(harness.recordingsDirectory, { recursive: true })
+    writeFileSync(
+      pendingPartPath(harness.recordingsDirectory, 'meeting-1', 0),
+      Buffer.from([8, 9]),
+      { flag: 'w' },
+    )
+    await writeSessionManifest(harness.recordingsDirectory, {
+      version: 1,
+      meetingId: 'meeting-1',
+      activePartIndex: 1,
+      totalBytes: 2,
+      durationMs: 1_000,
+      parts: [
+        {
+          partIndex: 0,
+          lastChunkIndex: 0,
+          byteCount: 2,
+          durationMs: 1_000,
+          completed: true,
+        },
+      ],
+    })
+    harness.repository.updateRecordingProgress('meeting-1', 2, 1_000)
+
+    const reopened = new RecordingService(harness.repository, harness.recordingsDirectory)
+    try {
+      await reopened.start('meeting-1')
+      await reopened.stop('meeting-1')
+
+      const completed = completedPartPath(harness.recordingsDirectory, 'meeting-1', 0)
+      expect(readFileSync(completed)).toEqual(Buffer.from([8, 9]))
+      expect(harness.repository.requireById('meeting-1')).toMatchObject({
+        status: 'recorded',
+        audioPath: basename(completed),
+        audioByteCount: 2,
+      })
+    } finally {
+      await reopened.close()
+      harness.database.close()
+    }
+  })
+
+  it('accepts retry of the exact chunk that triggered rollover without duplicating bytes', async () => {
+    const harness = createHarness()
+    await harness.service.start('meeting-1')
+    const boundaryChunk = {
+      meetingId: 'meeting-1',
+      partIndex: 0,
+      chunkIndex: 0,
+      durationMs: 1_000,
+      bytes: new Uint8Array(RECORDING_PART_LIMIT_BYTES),
+    }
+
+    const first = await harness.service.appendChunk(boundaryChunk)
+    const duplicate = await harness.service.appendChunk(boundaryChunk)
+
+    expect(duplicate).toEqual(first)
+    expect(readFileSync(completedPartPath(harness.recordingsDirectory, 'meeting-1', 0))).toHaveLength(
+      RECORDING_PART_LIMIT_BYTES,
+    )
+    await harness.service.close()
+    harness.database.close()
+  })
+
+  it('persists meeting ids containing Windows-illegal filename characters', async () => {
+    const meetingId = 'meeting:*?<>|."'
+    const harness = createHarness(meetingId)
+    try {
+      await harness.service.start(meetingId)
+      await harness.service.appendChunk({
+        meetingId,
+        partIndex: 0,
+        chunkIndex: 0,
+        durationMs: 1_000,
+        bytes: Uint8Array.from([3]),
+      })
+
+      const partPath = pendingPartPath(harness.recordingsDirectory, meetingId, 0)
+      expect(basename(partPath)).not.toMatch(/[<>:"/\\|?*]/)
+      expect(readFileSync(partPath)).toEqual(Buffer.from([3]))
+    } finally {
+      await harness.service.close()
+      harness.database.close()
+    }
   })
 })

@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 function safeMeetingName(meetingId: string): string {
   if (meetingId.length === 0) {
     throw new Error('Meeting id must not be empty')
   }
-  return encodeURIComponent(meetingId)
+  return createHash('sha256').update(meetingId, 'utf8').digest('hex')
 }
 
 export function manifestPath(recordingsDirectory: string, meetingId: string): string {

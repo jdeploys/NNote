@@ -45,6 +45,8 @@ export class RecordingService {
     if (manifest === null) {
       manifest = createSessionManifest(meetingId)
       await writeSessionManifest(this.recordingsDirectory, manifest)
+    } else {
+      await this.reconcilePartFiles(manifest)
     }
     this.sessions.set(meetingId, manifest)
     this.meetings.updateRecordingProgress(meetingId, manifest.totalBytes, manifest.durationMs)
@@ -54,6 +56,14 @@ export class RecordingService {
   async appendChunk(input: AppendChunkInput): Promise<RecordingProgress> {
     const manifest = this.requireSession(input.meetingId)
     if (input.partIndex !== manifest.activePartIndex) {
+      const completedPart = manifest.parts.find(({ partIndex }) => partIndex === input.partIndex)
+      if (
+        completedPart?.completed === true &&
+        input.partIndex === manifest.activePartIndex - 1 &&
+        input.chunkIndex === completedPart.lastChunkIndex
+      ) {
+        return this.progress(manifest, manifest.activePartIndex)
+      }
       throw new Error(`Expected part index ${manifest.activePartIndex}, received ${input.partIndex}`)
     }
     if (input.durationMs < manifest.durationMs) {
@@ -95,17 +105,14 @@ export class RecordingService {
       parts,
     }
 
+    if (policy.rollPart) {
+      await this.closeHandle(input.meetingId)
+      await this.finalizePart(input.meetingId, input.partIndex, partBytes)
+    }
+
     await writeSessionManifest(this.recordingsDirectory, nextManifest)
     this.sessions.set(input.meetingId, nextManifest)
     this.meetings.updateRecordingProgress(input.meetingId, totalBytes, input.durationMs)
-
-    if (policy.rollPart) {
-      await this.closeHandle(input.meetingId)
-      await rename(
-        pendingPartPath(this.recordingsDirectory, input.meetingId, input.partIndex),
-        completedPartPath(this.recordingsDirectory, input.meetingId, input.partIndex),
-      )
-    }
 
     return this.progress(nextManifest, policy.rollPart ? input.partIndex + 1 : null)
   }
@@ -123,20 +130,18 @@ export class RecordingService {
     const manifest = this.requireSession(meetingId)
     await this.closeHandle(meetingId)
 
+    for (const part of manifest.parts) {
+      if (!part.completed) {
+        await this.finalizePart(meetingId, part.partIndex, part.byteCount)
+      }
+    }
+
     const completedManifest: SessionManifest = {
       ...manifest,
       parts: manifest.parts.map((part) => ({ ...part, completed: true })),
     }
     await writeSessionManifest(this.recordingsDirectory, completedManifest)
-
-    for (const part of manifest.parts) {
-      if (!part.completed) {
-        await rename(
-          pendingPartPath(this.recordingsDirectory, meetingId, part.partIndex),
-          completedPartPath(this.recordingsDirectory, meetingId, part.partIndex),
-        )
-      }
-    }
+    this.sessions.set(meetingId, completedManifest)
 
     const firstAudioPath =
       manifest.parts.length === 0
@@ -196,11 +201,110 @@ export class RecordingService {
   }
 
   private progress(manifest: SessionManifest, rolledToPartIndex: number | null): RecordingProgress {
+    const activePartBytes =
+      manifest.parts.find(({ partIndex }) => partIndex === manifest.activePartIndex)?.byteCount ?? 0
     return {
       totalBytes: manifest.totalBytes,
       durationMs: manifest.durationMs,
-      warn: evaluateRecordingSize(manifest.totalBytes).warn,
+      warn: evaluateRecordingSize(activePartBytes).warn,
       rolledToPartIndex,
+    }
+  }
+
+  private async reconcilePartFiles(manifest: SessionManifest): Promise<void> {
+    for (const part of manifest.parts) {
+      const pending = pendingPartPath(this.recordingsDirectory, manifest.meetingId, part.partIndex)
+      const completed = completedPartPath(this.recordingsDirectory, manifest.meetingId, part.partIndex)
+      const [pendingSize, completedSize] = await Promise.all([
+        this.fileSize(pending),
+        this.fileSize(completed),
+      ])
+
+      if (pendingSize !== null && completedSize !== null) {
+        throw new Error(`Recording part ${part.partIndex} has both pending and completed files`)
+      }
+
+      if (part.completed) {
+        if (completedSize !== null) {
+          this.assertCommittedPartSize(part, completedSize)
+          continue
+        }
+        if (pendingSize === null) {
+          throw new Error(`Completed recording part ${part.partIndex} is missing`)
+        }
+        this.assertCommittedPartSize(part, pendingSize)
+        await rename(pending, completed)
+        continue
+      }
+
+      if (pendingSize !== null) {
+        if (pendingSize < part.byteCount) {
+          throw new Error(`Recording part ${part.partIndex} is shorter than its manifest`)
+        }
+        continue
+      }
+      if (completedSize === null) {
+        throw new Error(`Pending recording part ${part.partIndex} is missing`)
+      }
+      if (completedSize < part.byteCount) {
+        throw new Error(`Recording part ${part.partIndex} is shorter than its manifest`)
+      }
+      await rename(completed, pending)
+      if (completedSize > part.byteCount) {
+        const handle = await open(pending, 'r+')
+        try {
+          await handle.truncate(part.byteCount)
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+      }
+    }
+  }
+
+  private async finalizePart(
+    meetingId: string,
+    partIndex: number,
+    expectedBytes: number,
+  ): Promise<void> {
+    const pending = pendingPartPath(this.recordingsDirectory, meetingId, partIndex)
+    const completed = completedPartPath(this.recordingsDirectory, meetingId, partIndex)
+    const [pendingSize, completedSize] = await Promise.all([
+      this.fileSize(pending),
+      this.fileSize(completed),
+    ])
+    if (pendingSize !== null && completedSize !== null) {
+      throw new Error(`Recording part ${partIndex} has both pending and completed files`)
+    }
+    if (completedSize !== null) {
+      if (completedSize !== expectedBytes) {
+        throw new Error(`Completed recording part ${partIndex} has an unexpected size`)
+      }
+      return
+    }
+    if (pendingSize === null) {
+      throw new Error(`Recording part ${partIndex} is missing`)
+    }
+    if (pendingSize !== expectedBytes) {
+      throw new Error(`Pending recording part ${partIndex} has an unexpected size`)
+    }
+    await rename(pending, completed)
+  }
+
+  private async fileSize(path: string): Promise<number | null> {
+    try {
+      return (await stat(path)).size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null
+      }
+      throw error
+    }
+  }
+
+  private assertCommittedPartSize(part: RecordingPartManifest, size: number): void {
+    if (size !== part.byteCount) {
+      throw new Error(`Completed recording part ${part.partIndex} does not match its manifest`)
     }
   }
 
