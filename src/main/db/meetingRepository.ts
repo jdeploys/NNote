@@ -111,6 +111,27 @@ export class MeetingRepository {
     return meeting
   }
 
+  listByStatuses(statuses: readonly Meeting['status'][]): Meeting[] {
+    if (statuses.length === 0) return []
+    const placeholders = statuses.map(() => '?').join(', ')
+    const rows = this.database
+      .prepare(`SELECT * FROM meetings WHERE status IN (${placeholders}) ORDER BY created_at, id`)
+      .all(...statuses) as MeetingRow[]
+    return rows.map(toMeeting)
+  }
+
+  transitionRecordingStatus(id: string, status: 'recording' | 'recoverable'): Meeting {
+    return inTransaction(this.database, () => {
+      const meeting = this.requireById(id)
+      if (meeting.status === status) return meeting
+      assertMeetingTransition(meeting.status, status)
+      this.database
+        .prepare('UPDATE meetings SET status = ?, updated_at = ? WHERE id = ?')
+        .run(status, new Date().toISOString(), id)
+      return this.requireById(id)
+    })
+  }
+
   updateRecordingProgress(id: string, audioByteCount: number, durationMs: number): Meeting {
     if (!Number.isSafeInteger(audioByteCount) || audioByteCount < 0) {
       throw new Error('Recording byte count must be a non-negative safe integer')

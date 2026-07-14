@@ -17,6 +17,14 @@ const recording: DesktopApi['recording'] = Object.freeze({
   discard: (meetingId: string) => ipcRenderer.invoke('recording:discard', meetingId),
 })
 
-const desktopApi: DesktopApi = Object.freeze({ settings, recording })
+const recovery: DesktopApi['recovery'] = Object.freeze({
+  scan: () => ipcRenderer.invoke('recovery:scan'),
+  recover: (meetingId: string) => ipcRenderer.invoke('recovery:recover', meetingId),
+  keepAsFile: (meetingId: string) => ipcRenderer.invoke('recovery:keep-as-file', meetingId),
+  discard: (meetingId: string, options: { explicitDelete: true }) =>
+    ipcRenderer.invoke('recovery:discard', meetingId, options),
+})
+
+const desktopApi: DesktopApi = Object.freeze({ settings, recording, recovery })
 
 contextBridge.exposeInMainWorld('desktopApi', desktopApi)

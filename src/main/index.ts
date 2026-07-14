@@ -5,8 +5,10 @@ import { KeyringCredentialStore } from './credentials/keyringCredentialStore'
 import { openDatabase } from './db/database'
 import { MeetingRepository } from './db/meetingRepository'
 import { registerRecordingHandlers } from './ipc/registerRecordingHandlers'
+import { registerRecoveryHandlers } from './ipc/registerRecoveryHandlers'
 import { registerSettingsHandlers } from './ipc/registerSettingsHandlers'
 import { RecordingService } from './recording/recordingService'
+import { RecoveryService } from './recording/recoveryService'
 import { createMainWindow } from './window/createMainWindow'
 
 registerSettingsHandlers(ipcMain, new KeyringCredentialStore(), new OpenAiKeyValidator())
@@ -19,6 +21,10 @@ app.whenReady().then(() => {
     join(userDataDirectory, 'recordings'),
   )
   registerRecordingHandlers(ipcMain, recordingService)
+  registerRecoveryHandlers(
+    ipcMain,
+    new RecoveryService(new MeetingRepository(database), recordingService, join(userDataDirectory, 'recordings')),
+  )
 
   createMainWindow()
 
