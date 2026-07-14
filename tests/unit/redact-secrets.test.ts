@@ -35,6 +35,26 @@ describe('redactSecrets', () => {
     expect(redacted.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(5)
   })
 
+  it('redacts complete Basic and Bearer values without consuming adjacent serialized fields', () => {
+    const value = [
+      'Authorization: Basic opaque plain secret, with comma',
+      '{"authorization":"Basic opaque json, secret","next":"keep-json"}',
+      "{ headers: { Authorization: 'Basic opaque nested, secret', next: 'keep-nested' } }",
+      'authorization=Basic opaque equals secret;next=keep-equals',
+      '[["Authorization","Bearer opaque tuple, secret"],["X-Trace","keep-tuple"]]',
+    ].join('\n')
+
+    const redacted = redactSecrets(value)
+
+    for (const fragment of ['opaque', 'plain secret', 'json, secret', 'nested, secret', 'equals secret', 'tuple, secret']) {
+      expect(redacted).not.toContain(fragment)
+    }
+    expect(redacted).toContain('"next":"keep-json"')
+    expect(redacted).toContain("next: 'keep-nested'")
+    expect(redacted).toContain('next=keep-equals')
+    expect(redacted).toContain('["X-Trace","keep-tuple"]')
+  })
+
   it('does not alter a safe user-facing error', () => {
     expect(redactSecrets('The audio file is invalid.')).toBe('The audio file is invalid.')
   })
