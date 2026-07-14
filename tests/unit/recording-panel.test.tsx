@@ -5,6 +5,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RecordingPanel } from '../../src/renderer/src/features/recording/RecordingPanel'
+import { RecordingTerminalError } from '../../src/renderer/src/features/recording/mediaRecorderController'
 
 describe('RecordingPanel', () => {
   afterEach(cleanup)
@@ -48,5 +49,50 @@ describe('RecordingPanel', () => {
     await user.click(screen.getByRole('button', { name: '폐기' }))
     await user.click(screen.getByRole('button', { name: '녹음 폐기 확인' }))
     expect(controls.discard).toHaveBeenCalledOnce()
+  })
+
+  it('shows stopped pending state and retries Main stop without claiming to still record', async () => {
+    const user = userEvent.setup()
+    const controls = {
+      start: vi.fn(async () => undefined),
+      stop: vi
+        .fn()
+        .mockRejectedValueOnce(new RecordingTerminalError('stop_failed', 'database busy'))
+        .mockResolvedValueOnce(undefined),
+      discard: vi.fn(async () => undefined),
+    }
+    render(<RecordingPanel controls={controls} onNavigate={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: '녹음 시작' }))
+    await user.click(screen.getByRole('button', { name: '종료' }))
+
+    expect(await screen.findByText('녹음은 중지되었지만 저장 완료를 기다리고 있습니다.')).toBeInTheDocument()
+    expect(screen.queryByText('녹음 중')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '종료 재시도' }))
+
+    expect(controls.stop).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: '녹음 시작' })).toBeInTheDocument()
+  })
+
+  it('shows discard retry after confirmed discard fails and never reports recording', async () => {
+    const user = userEvent.setup()
+    const controls = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      discard: vi
+        .fn()
+        .mockRejectedValueOnce(new RecordingTerminalError('discard_failed', 'database busy'))
+        .mockResolvedValueOnce(undefined),
+    }
+    render(<RecordingPanel controls={controls} onNavigate={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: '녹음 시작' }))
+    await user.click(screen.getByRole('button', { name: '폐기' }))
+    await user.click(screen.getByRole('button', { name: '녹음 폐기 확인' }))
+
+    expect(await screen.findByText('녹음은 중지되었지만 폐기를 완료하지 못했습니다.')).toBeInTheDocument()
+    expect(screen.queryByText('녹음 중')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '폐기 재시도' }))
+
+    expect(controls.discard).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: '녹음 시작' })).toBeInTheDocument()
   })
 })

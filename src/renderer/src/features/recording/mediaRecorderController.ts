@@ -18,7 +18,32 @@ const defaultDependencies: MediaRecorderDependencies = {
   now: () => performance.now(),
 }
 
+export type RecordingTerminalFailure = 'stop_failed' | 'discard_failed' | 'capture_failed'
+
+export class RecordingTerminalError extends Error {
+  override readonly name = 'RecordingTerminalError'
+
+  constructor(
+    readonly state: RecordingTerminalFailure,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+  }
+}
+
+type ControllerState =
+  | 'idle'
+  | 'starting'
+  | 'recording'
+  | 'paused'
+  | 'stopping'
+  | RecordingTerminalFailure
+
+type TerminalMode = 'stop' | 'discard'
+
 export class MediaRecorderController {
+  private state: ControllerState = 'idle'
   private meetingId: string | null = null
   private stream: MediaStream | null = null
   private recorder: MediaRecorder | null = null
@@ -29,7 +54,8 @@ export class MediaRecorderController {
   private startedAt = 0
   private pausedAt: number | null = null
   private pausedDurationMs = 0
-  private stopping: Promise<void> | null = null
+  private terminalMode: TerminalMode | null = null
+  private terminalPromise: Promise<void> | null = null
 
   constructor(
     private readonly recording: RecordingApi,
@@ -37,12 +63,14 @@ export class MediaRecorderController {
   ) {}
 
   async start(meetingId: string): Promise<void> {
-    if (this.meetingId !== null) throw new Error('A recording is already active')
+    if (this.state !== 'idle') throw new Error(`Recording is ${this.state}`)
+    this.state = 'starting'
 
-    const stream = await this.dependencies.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
+    let stream: MediaStream | null = null
     try {
+      stream = await this.dependencies.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
       this.appendQueue = Promise.resolve()
       this.appendFailure = null
       const progress = await this.recording.start(meetingId)
@@ -53,26 +81,31 @@ export class MediaRecorderController {
       this.meetingId = meetingId
       this.stream = stream
       this.recorder = recorder
-      this.partIndex = progress.rolledToPartIndex ?? 0
-      this.chunkIndex = 0
+      this.partIndex = progress.activePartIndex
+      this.chunkIndex = progress.nextChunkIndex
       this.startedAt = this.dependencies.now() - progress.durationMs
       this.pausedAt = null
       this.pausedDurationMs = 0
       recorder.addEventListener('dataavailable', this.onDataAvailable)
       recorder.start(TIMESLICE_MS)
+      this.state = 'recording'
     } catch (error) {
       this.recorder?.removeEventListener('dataavailable', this.onDataAvailable)
-      for (const track of stream.getTracks()) track.stop()
-      this.meetingId = null
-      this.stream = null
-      this.recorder = null
+      if (this.stream === null) {
+        for (const track of stream?.getTracks() ?? []) track.stop()
+      } else {
+        this.cleanupCapture()
+      }
+      this.clearSession()
       throw error
     }
   }
 
   async pause(): Promise<void> {
-    const { meetingId, recorder } = this.requireActive()
+    if (this.state !== 'recording') throw new Error('Recording is not active')
+    const { meetingId, recorder } = this.requireCapture()
     recorder.pause()
+    this.state = 'paused'
     this.pausedAt = this.dependencies.now()
     await this.appendQueue
     if (this.appendFailure !== null) throw this.appendFailure
@@ -80,23 +113,120 @@ export class MediaRecorderController {
   }
 
   async resume(): Promise<void> {
-    const { meetingId, recorder } = this.requireActive()
+    if (this.state !== 'paused') throw new Error('Recording is not paused')
+    const { meetingId, recorder } = this.requireCapture()
     await this.recording.resume(meetingId)
     recorder.resume()
     if (this.pausedAt !== null) {
       this.pausedDurationMs += this.dependencies.now() - this.pausedAt
       this.pausedAt = null
     }
+    this.state = 'recording'
   }
 
   stop(): Promise<void> {
-    if (this.stopping === null) this.stopping = this.finish(true)
-    return this.stopping
+    return this.beginTerminal('stop')
   }
 
   discard(): Promise<void> {
-    if (this.stopping === null) this.stopping = this.finish(false)
-    return this.stopping
+    return this.beginTerminal('discard')
+  }
+
+  private beginTerminal(mode: TerminalMode): Promise<void> {
+    if (this.terminalPromise !== null) {
+      if (this.terminalMode === mode) return this.terminalPromise
+      return Promise.reject(
+        new Error(`Cannot ${mode} while ${this.terminalMode} is already in progress`),
+      )
+    }
+
+    let operation: Promise<void>
+    if (this.state === 'recording' || this.state === 'paused') {
+      operation = this.finishCaptureAndApply(mode)
+    } else if (mode === 'stop' && this.state === 'stop_failed') {
+      operation = this.retryMainTerminal('stop')
+    } else if (mode === 'discard' && this.state === 'discard_failed') {
+      operation = this.retryMainTerminal('discard')
+    } else if (mode === 'discard' && this.state === 'capture_failed') {
+      operation = this.retryMainTerminal('discard')
+    } else if (this.state === 'stop_failed' || this.state === 'discard_failed') {
+      operation = Promise.reject(
+        new Error(`Cannot ${mode} after ${this.state}; retry the original action`),
+      )
+    } else if (this.state === 'capture_failed') {
+      operation = Promise.reject(
+        new RecordingTerminalError('capture_failed', 'Recording capture failed; only discard is safe'),
+      )
+    } else {
+      operation = Promise.reject(new Error('No recording is active'))
+    }
+
+    this.terminalMode = mode
+    const tracked = operation.finally(() => {
+      if (this.terminalPromise === tracked) {
+        this.terminalPromise = null
+        this.terminalMode = null
+      }
+    })
+    this.terminalPromise = tracked
+    return tracked
+  }
+
+  private async finishCaptureAndApply(mode: TerminalMode): Promise<void> {
+    const { meetingId, recorder } = this.requireCapture()
+    this.state = 'stopping'
+    try {
+      try {
+        await new Promise<void>((resolve) => {
+          recorder.addEventListener('stop', () => resolve(), { once: true })
+          recorder.stop()
+        })
+        await this.appendQueue
+      } catch (error) {
+        this.state = 'capture_failed'
+        throw new RecordingTerminalError(
+          'capture_failed',
+          'MediaRecorder could not finish capture; only discard is safe',
+          { cause: error },
+        )
+      }
+
+      if (mode === 'stop' && this.appendFailure !== null) {
+        this.state = 'capture_failed'
+        throw new RecordingTerminalError(
+          'capture_failed',
+          'A recording chunk could not be saved; only discard is safe',
+          { cause: this.appendFailure },
+        )
+      }
+
+      try {
+        await this.recording[mode](meetingId)
+      } catch (error) {
+        const failure = mode === 'stop' ? 'stop_failed' : 'discard_failed'
+        this.state = failure
+        throw new RecordingTerminalError(failure, `${mode} could not be completed`, {
+          cause: error,
+        })
+      }
+      this.clearSession()
+    } finally {
+      this.cleanupCapture()
+    }
+  }
+
+  private async retryMainTerminal(mode: TerminalMode): Promise<void> {
+    const meetingId = this.meetingId
+    if (meetingId === null) throw new Error('No recording is active')
+    this.state = 'stopping'
+    try {
+      await this.recording[mode](meetingId)
+      this.clearSession()
+    } catch (error) {
+      const failure = mode === 'stop' ? 'stop_failed' : 'discard_failed'
+      this.state = failure
+      throw new RecordingTerminalError(failure, `${mode} could not be completed`, { cause: error })
+    }
   }
 
   private readonly onDataAvailable = (event: Event): void => {
@@ -122,47 +252,32 @@ export class MediaRecorderController {
           mimeType: RECORDING_MIME_TYPE,
           bytes,
         })
-        if (progress.rolledToPartIndex !== null) {
-          this.partIndex = progress.rolledToPartIndex
-          this.chunkIndex = 0
-        } else {
-          this.chunkIndex += 1
-        }
+        this.partIndex = progress.activePartIndex
+        this.chunkIndex = progress.nextChunkIndex
       })
       .catch((error: unknown) => {
         this.appendFailure ??= error
       })
   }
 
-  private async finish(commit: boolean): Promise<void> {
-    const { meetingId, recorder } = this.requireActive()
-    try {
-      await new Promise<void>((resolve) => {
-        recorder.addEventListener('stop', () => resolve(), { once: true })
-        recorder.stop()
-      })
-      await this.appendQueue
-
-      if (commit) {
-        if (this.appendFailure !== null) throw this.appendFailure
-        await this.recording.stop(meetingId)
-      } else {
-        await this.recording.discard(meetingId)
-      }
-    } finally {
-      recorder.removeEventListener('dataavailable', this.onDataAvailable)
-      for (const track of this.stream?.getTracks() ?? []) track.stop()
-      this.meetingId = null
-      this.stream = null
-      this.recorder = null
-      this.pausedAt = null
-      this.pausedDurationMs = 0
-      this.stopping = null
-    }
-  }
-
-  private requireActive(): { meetingId: string; recorder: MediaRecorder } {
+  private requireCapture(): { meetingId: string; recorder: MediaRecorder } {
     if (this.meetingId === null || this.recorder === null) throw new Error('No recording is active')
     return { meetingId: this.meetingId, recorder: this.recorder }
+  }
+
+  private cleanupCapture(): void {
+    this.recorder?.removeEventListener('dataavailable', this.onDataAvailable)
+    for (const track of this.stream?.getTracks() ?? []) track.stop()
+    this.stream = null
+    this.recorder = null
+    this.pausedAt = null
+    this.pausedDurationMs = 0
+  }
+
+  private clearSession(): void {
+    this.cleanupCapture()
+    this.meetingId = null
+    this.appendFailure = null
+    this.state = 'idle'
   }
 }

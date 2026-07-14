@@ -5,6 +5,8 @@ export interface RecordingProgress {
   durationMs: number
   warn: boolean
   rolledToPartIndex: number | null
+  activePartIndex: number
+  nextChunkIndex: number
 }
 
 export interface RecordingChunk {

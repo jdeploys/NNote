@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -67,7 +67,8 @@ describe('RecordingService', () => {
     await harness.service.close()
 
     const reopened = new RecordingService(harness.repository, harness.recordingsDirectory)
-    await reopened.start('meeting-1')
+    const resumed = await reopened.start('meeting-1')
+    expect(resumed).toMatchObject({ activePartIndex: 0, nextChunkIndex: 1 })
     const progress = await reopened.appendChunk({
       meetingId: 'meeting-1',
       partIndex: 0,
@@ -82,6 +83,16 @@ describe('RecordingService', () => {
     expect(progress).toMatchObject({ totalBytes: 4, durationMs: 2_000 })
     expect(harness.repository.requireById('meeting-1').audioByteCount).toBe(4)
     await reopened.close()
+    harness.database.close()
+  })
+
+  it('starts a new session at part zero and chunk zero', async () => {
+    const harness = createHarness()
+
+    const progress = await harness.service.start('meeting-1')
+
+    expect(progress).toMatchObject({ activePartIndex: 0, nextChunkIndex: 0 })
+    await harness.service.close()
     harness.database.close()
   })
 
@@ -151,6 +162,29 @@ describe('RecordingService', () => {
       audioByteCount: 2,
       durationMs: 1_000,
     })
+    await expect(stat(manifestPath(harness.recordingsDirectory, 'meeting-1'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    await harness.service.close()
+    harness.database.close()
+  })
+
+  it('safely retries stop after the meeting commit succeeded but cleanup did not', async () => {
+    const harness = createHarness()
+    await harness.service.start('meeting-1')
+    await harness.service.appendChunk({
+      meetingId: 'meeting-1', partIndex: 0, chunkIndex: 0, durationMs: 1_000,
+      bytes: Uint8Array.from([7, 8]),
+    })
+    const pending = pendingPartPath(harness.recordingsDirectory, 'meeting-1', 0)
+    const completed = completedPartPath(harness.recordingsDirectory, 'meeting-1', 0)
+    renameSync(pending, completed)
+    harness.repository.completeRecording('meeting-1', 2, 1_000, basename(completed))
+
+    await expect(harness.service.stop('meeting-1')).resolves.toBeUndefined()
+
+    expect(readFileSync(completed)).toEqual(Buffer.from([7, 8]))
+    expect(harness.repository.requireById('meeting-1').status).toBe('recorded')
     await expect(stat(manifestPath(harness.recordingsDirectory, 'meeting-1'))).rejects.toMatchObject({
       code: 'ENOENT',
     })

@@ -9,7 +9,7 @@ describe('recording IPC', () => {
     }
     const service = {
       start: vi.fn(),
-      appendChunk: vi.fn(async () => ({ totalBytes: 2, durationMs: 1_000, warn: false, rolledToPartIndex: null })),
+      appendChunk: vi.fn(async () => ({ totalBytes: 2, durationMs: 1_000, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1 })),
       pause: vi.fn(),
       resume: vi.fn(),
       stop: vi.fn(),

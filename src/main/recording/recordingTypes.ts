@@ -1,3 +1,5 @@
+import type { RecordingProgress as SharedRecordingProgress } from '../../shared/contracts/recording'
+
 const MEBIBYTE = 1024 * 1024
 
 export const RECORDING_WARNING_BYTES = 22 * MEBIBYTE
@@ -11,12 +13,7 @@ export interface AppendChunkInput {
   bytes: Uint8Array
 }
 
-export interface RecordingProgress {
-  totalBytes: number
-  durationMs: number
-  warn: boolean
-  rolledToPartIndex: number | null
-}
+export type RecordingProgress = SharedRecordingProgress
 
 export interface RecordingSizePolicy {
   warn: boolean

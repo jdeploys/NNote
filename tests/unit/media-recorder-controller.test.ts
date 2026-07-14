@@ -40,14 +40,14 @@ function createHarness() {
     releaseFinalAppend = resolve
   })
   const recording: RecordingApi = {
-    start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null })),
+    start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
     appendChunk: vi.fn(async (input) => {
       calls.push(`append:${input.chunkIndex}`)
       if (input.chunkIndex === 1) await finalAppendGate
-      return { totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rolledToPartIndex: null }
+      return { totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: input.chunkIndex + 1 }
     }),
     pause: vi.fn(async () => undefined),
-    resume: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null })),
+    resume: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
     stop: vi.fn(async () => {
       calls.push('stop')
     }),
@@ -118,7 +118,10 @@ describe('MediaRecorderController', () => {
     await harness.controller.start('meeting-1')
     harness.getRecorder().emit([1])
 
-    await expect(harness.controller.stop()).rejects.toThrow('disk full')
+    await expect(harness.controller.stop()).rejects.toMatchObject({
+      state: 'capture_failed',
+      cause: expect.objectContaining({ message: 'disk full' }),
+    })
 
     expect(harness.recording.stop).not.toHaveBeenCalled()
     expect(harness.recording.discard).not.toHaveBeenCalled()
@@ -134,7 +137,7 @@ describe('MediaRecorderController', () => {
     ]
     let createCount = 0
     const recording = {
-      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null })),
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
       appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(),
     } satisfies RecordingApi
     const controller = new MediaRecorderController(recording, {
@@ -160,10 +163,10 @@ describe('MediaRecorderController', () => {
     const recorder = new FakeMediaRecorder()
     let clock = 0
     const recording = {
-      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null })),
-      appendChunk: vi.fn(async (input) => ({ totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rolledToPartIndex: null })),
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+      appendChunk: vi.fn(async (input) => ({ totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: input.chunkIndex + 1 })),
       pause: vi.fn(async () => undefined),
-      resume: vi.fn(async () => ({ totalBytes: 0, durationMs: 10_000, warn: false, rolledToPartIndex: null })),
+      resume: vi.fn(async () => ({ totalBytes: 0, durationMs: 10_000, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1 })),
       stop: vi.fn(async () => undefined),
       discard: vi.fn(async () => undefined),
     } satisfies RecordingApi
@@ -188,5 +191,138 @@ describe('MediaRecorderController', () => {
     )
     expect(recording.discard).not.toHaveBeenCalled()
     await controller.discard()
+  })
+
+  it('continues from the persisted active part and next chunk cursor', async () => {
+    const track = new FakeTrack()
+    const recorder = new FakeMediaRecorder()
+    const recording = {
+      start: vi.fn(async () => ({
+        totalBytes: 123, durationMs: 30_000, warn: false, rolledToPartIndex: null,
+        activePartIndex: 2, nextChunkIndex: 5,
+      })),
+      appendChunk: vi.fn(async () => ({
+        totalBytes: 124, durationMs: 40_000, warn: false, rolledToPartIndex: null,
+        activePartIndex: 2, nextChunkIndex: 6,
+      })),
+      pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(async () => undefined),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [track] }) as unknown as MediaStream),
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => 30_000,
+    })
+    await controller.start('meeting-1')
+    recorder.emit([9])
+    await vi.waitFor(() => expect(recording.appendChunk).toHaveBeenCalledOnce())
+
+    expect(recording.appendChunk).toHaveBeenCalledWith(
+      expect.objectContaining({ partIndex: 2, chunkIndex: 5 }),
+    )
+    await controller.discard()
+  })
+
+  it('locks start before microphone permission resolves', async () => {
+    let releaseStream!: (stream: MediaStream) => void
+    const streamPromise = new Promise<MediaStream>((resolve) => { releaseStream = resolve })
+    const track = new FakeTrack()
+    const recorder = new FakeMediaRecorder()
+    const recording = {
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+      appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(async () => undefined),
+    } satisfies RecordingApi
+    const getUserMedia = vi.fn(() => streamPromise)
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia,
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => 0,
+    })
+
+    const firstStart = controller.start('meeting-1')
+    await expect(controller.start('meeting-2')).rejects.toThrow(/starting|active/i)
+    expect(getUserMedia).toHaveBeenCalledOnce()
+    releaseStream({ getTracks: () => [track] } as unknown as MediaStream)
+    await firstStart
+    await controller.discard()
+  })
+
+  it('rejects discard racing with stop instead of reporting the stop result as discard', async () => {
+    const harness = createHarness()
+    await harness.controller.start('meeting-1')
+    harness.getRecorder().emit([1])
+    const stopping = harness.controller.stop()
+
+    await expect(harness.controller.discard()).rejects.toThrow(/stop.*progress|already.*stop/i)
+    expect(harness.recording.discard).not.toHaveBeenCalled()
+    harness.releaseFinalAppend()
+    await stopping
+  })
+
+  it('retries Main finalization after stop fails without restarting MediaRecorder', async () => {
+    const harness = createHarness()
+    vi.mocked(harness.recording.stop)
+      .mockRejectedValueOnce(new Error('database busy'))
+      .mockResolvedValueOnce(undefined)
+    await harness.controller.start('meeting-1')
+    harness.getRecorder().emit([1])
+    const firstStop = harness.controller.stop()
+    harness.releaseFinalAppend()
+
+    await expect(firstStop).rejects.toMatchObject({ state: 'stop_failed' })
+    expect(harness.track.stop).toHaveBeenCalledOnce()
+    await expect(harness.controller.stop()).resolves.toBeUndefined()
+    expect(harness.recording.stop).toHaveBeenCalledTimes(2)
+    expect(harness.track.stop).toHaveBeenCalledOnce()
+  })
+
+  it('does not poison the next terminal operation after stop is called while idle', async () => {
+    const harness = createHarness()
+    await expect(harness.controller.stop()).rejects.toThrow(/no recording/i)
+    await harness.controller.start('meeting-1')
+    const stopping = harness.controller.stop()
+    harness.releaseFinalAppend()
+    await expect(stopping).resolves.toBeUndefined()
+  })
+
+  it('retries the same discard after Main discard fails without reviving capture', async () => {
+    const harness = createHarness()
+    vi.mocked(harness.recording.discard)
+      .mockRejectedValueOnce(new Error('database busy'))
+      .mockResolvedValueOnce(undefined)
+    await harness.controller.start('meeting-1')
+
+    await expect(harness.controller.discard()).rejects.toMatchObject({ state: 'discard_failed' })
+    expect(harness.track.stop).toHaveBeenCalledOnce()
+    await expect(harness.controller.discard()).resolves.toBeUndefined()
+    expect(harness.recording.discard).toHaveBeenCalledTimes(2)
+    expect(harness.track.stop).toHaveBeenCalledOnce()
+  })
+
+  it('shares duplicate stop calls while rejecting a conflicting terminal action', async () => {
+    const harness = createHarness()
+    let releaseMainStop!: () => void
+    const mainStop = new Promise<void>((resolve) => { releaseMainStop = resolve })
+    vi.mocked(harness.recording.stop).mockReturnValueOnce(mainStop)
+    await harness.controller.start('meeting-1')
+
+    const first = harness.controller.stop()
+    await vi.waitFor(() => expect(harness.recording.stop).toHaveBeenCalledOnce())
+    const duplicate = harness.controller.stop()
+    expect(duplicate).toBe(first)
+    await expect(harness.controller.discard()).rejects.toThrow(/stop.*progress|already.*stop/i)
+    releaseMainStop()
+    await first
+  })
+
+  it('marks a MediaRecorder stop failure as capture failure and allows only discard', async () => {
+    const harness = createHarness()
+    await harness.controller.start('meeting-1')
+    harness.getRecorder().stop = vi.fn(() => { throw new Error('recorder stopped unexpectedly') })
+
+    await expect(harness.controller.stop()).rejects.toMatchObject({ state: 'capture_failed' })
+    await expect(harness.controller.stop()).rejects.toMatchObject({ state: 'capture_failed' })
+    await expect(harness.controller.discard()).resolves.toBeUndefined()
+    expect(harness.recording.stop).not.toHaveBeenCalled()
+    expect(harness.recording.discard).toHaveBeenCalledOnce()
   })
 })

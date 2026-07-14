@@ -150,12 +150,23 @@ export class RecordingService {
             this.recordingsDirectory,
             completedPartPath(this.recordingsDirectory, meetingId, manifest.parts[0].partIndex),
           )
-    this.meetings.completeRecording(
-      meetingId,
-      manifest.totalBytes,
-      manifest.durationMs,
-      firstAudioPath,
-    )
+    const meeting = this.meetings.requireById(meetingId)
+    if (meeting.status === 'recorded') {
+      if (
+        meeting.audioByteCount !== manifest.totalBytes ||
+        meeting.durationMs !== manifest.durationMs ||
+        meeting.audioPath !== firstAudioPath
+      ) {
+        throw new Error('Recorded meeting metadata does not match the recording session')
+      }
+    } else {
+      this.meetings.completeRecording(
+        meetingId,
+        manifest.totalBytes,
+        manifest.durationMs,
+        firstAudioPath,
+      )
+    }
     await rm(manifestPath(this.recordingsDirectory, meetingId), { force: true })
     this.sessions.delete(meetingId)
   }
@@ -201,13 +212,17 @@ export class RecordingService {
   }
 
   private progress(manifest: SessionManifest, rolledToPartIndex: number | null): RecordingProgress {
-    const activePartBytes =
-      manifest.parts.find(({ partIndex }) => partIndex === manifest.activePartIndex)?.byteCount ?? 0
+    const activePart = manifest.parts.find(
+      ({ partIndex }) => partIndex === manifest.activePartIndex,
+    )
+    const activePartBytes = activePart?.byteCount ?? 0
     return {
       totalBytes: manifest.totalBytes,
       durationMs: manifest.durationMs,
       warn: evaluateRecordingSize(activePartBytes).warn,
       rolledToPartIndex,
+      activePartIndex: manifest.activePartIndex,
+      nextChunkIndex: (activePart?.lastChunkIndex ?? -1) + 1,
     }
   }
 
