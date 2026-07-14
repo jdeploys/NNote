@@ -450,19 +450,56 @@ export class MeetingRepository {
         message: 'Processing was interrupted. Try again.',
         retryable: true,
       })
+      const cleanupError = JSON.stringify({
+        code: 'AUDIO_CLEANUP_INTERRUPTED',
+        message: 'Audio cleanup was interrupted. Try again.',
+        retryable: true,
+      })
       const now = new Date().toISOString()
+      const needsSummaryRetry = new Set<string>()
       for (const row of rows) {
-        this.database.prepare(
-          'UPDATE processing_attempts SET finished_at = ?, succeeded = 0, sanitized_error = ? WHERE id = ?',
-        ).run(now, error, row.id)
         const stage = row.stage === 'transcription' ? 'transcribing' : row.stage
-        if (stage === 'transcribing' || stage === 'summarizing') {
-          const meeting = this.requireById(row.meeting_id)
-          if (meeting.status === stage) {
-            this.database.prepare("UPDATE meetings SET status = 'failed', updated_at = ? WHERE id = ?")
-              .run(now, row.meeting_id)
-          }
+        const meeting = this.requireById(row.meeting_id)
+        const committed =
+          (stage === 'transcribing' && (meeting.status === 'summarizing' || meeting.status === 'completed')) ||
+          (stage === 'summarizing' && meeting.status === 'completed') ||
+          (stage === 'cleanup' && meeting.status === 'completed' && meeting.audioPath === null)
+        this.database.prepare(
+          'UPDATE processing_attempts SET finished_at = ?, succeeded = ?, sanitized_error = ? WHERE id = ?',
+        ).run(now, committed ? 1 : 0, committed ? null : stage === 'cleanup' ? cleanupError : error, row.id)
+        if (committed && stage === 'transcribing' && meeting.status === 'summarizing') {
+          needsSummaryRetry.add(meeting.id)
+        } else if (!committed && meeting.status === stage) {
+          this.database.prepare("UPDATE meetings SET status = 'failed', updated_at = ? WHERE id = ?")
+            .run(now, meeting.id)
         }
+      }
+
+      for (const meetingId of needsSummaryRetry) {
+        this.database.prepare(
+          `INSERT INTO processing_attempts
+            (id, meeting_id, stage, started_at, finished_at, succeeded, sanitized_error, owner_id)
+           VALUES (?, ?, 'summarizing', ?, ?, 0, ?, ?)`,
+        ).run(randomUUID(), meetingId, now, now, error, currentOwnerId)
+        this.database.prepare("UPDATE meetings SET status = 'failed', updated_at = ? WHERE id = ?")
+          .run(now, meetingId)
+      }
+
+      const cleanupMeetings = this.database.prepare(
+        `SELECT id FROM meetings
+         WHERE status = 'completed' AND audio_policy = 'delete_after_processing' AND audio_path IS NOT NULL`,
+      ).all() as Array<{ id: string }>
+      for (const meeting of cleanupMeetings) {
+        const latestCleanup = this.database.prepare(
+          `SELECT succeeded FROM processing_attempts
+           WHERE meeting_id = ? AND stage = 'cleanup' ORDER BY rowid DESC LIMIT 1`,
+        ).get(meeting.id) as { succeeded: number | null } | undefined
+        if (latestCleanup?.succeeded === 0 || latestCleanup?.succeeded === null) continue
+        this.database.prepare(
+          `INSERT INTO processing_attempts
+            (id, meeting_id, stage, started_at, finished_at, succeeded, sanitized_error, owner_id)
+           VALUES (?, ?, 'cleanup', ?, ?, 0, ?, ?)`,
+        ).run(randomUUID(), meeting.id, now, now, cleanupError, currentOwnerId)
       }
     })
   }

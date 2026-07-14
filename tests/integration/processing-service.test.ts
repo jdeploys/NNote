@@ -180,6 +180,102 @@ describe('ProcessingService', () => {
     reopened.close()
   })
 
+  it('reopens after transcript commit before attempt finish and retries summary without transcription', async () => {
+    const h = harness({ policy: 'keep' })
+    const attempt = h.meetings.beginProcessingAttempt('meeting-1', 'transcribing', 'old-process')
+    h.meetings.beginTranscription('meeting-1')
+    h.meetings.completeTranscription(
+      'meeting-1',
+      [{ id: 'speaker-crash', meetingId: 'meeting-1', displayName: 'Speaker' }],
+      [{ id: 'segment-crash', meetingId: 'meeting-1', speakerId: 'speaker-crash', startMs: 0, endMs: 1_000, text: 'committed' }],
+    )
+    const databasePath = h.database.name
+    h.database.close()
+    const reopened = openDatabase(databasePath)
+    const meetings = new MeetingRepository(reopened)
+    const transcribe = vi.fn()
+    const summarize = vi.fn(async () => meetings.completeSummary('meeting-1', [], []))
+    const service = new ProcessingService(meetings, { transcribeMeeting: transcribe }, { summarizeMeeting: summarize }, join(h.first, '..'), undefined, 'new-process')
+
+    expect(meetings.latestProcessingAttempt('meeting-1')).toMatchObject({ stage: 'summarizing', succeeded: false })
+    expect(reopened.prepare('SELECT succeeded, sanitized_error FROM processing_attempts WHERE id = ?').get(attempt.id)).toEqual({ succeeded: 1, sanitized_error: null })
+    expect(service.getStatus('meeting-1')).toMatchObject({ state: 'failed', failedStage: 'summarizing', retryable: true, audioRequired: false })
+    await service.retry('meeting-1')
+    expect(transcribe).not.toHaveBeenCalled()
+    expect(summarize).toHaveBeenCalledTimes(1)
+    reopened.close()
+  })
+
+  it.each([
+    ['delete_after_processing', 'cleanup_failed'],
+    ['keep', 'completed'],
+  ] as const)('reopens after summary commit before attempt finish with %s policy as %s without AI', async (policy, expectedState) => {
+    const h = harness({ policy })
+    h.database.prepare("UPDATE meetings SET status = 'summarizing' WHERE id = ?").run('meeting-1')
+    const attempt = h.meetings.beginProcessingAttempt('meeting-1', 'summarizing', 'old-process')
+    h.meetings.completeSummary('meeting-1', [], [])
+    const databasePath = h.database.name
+    h.database.close()
+    const reopened = openDatabase(databasePath)
+    const meetings = new MeetingRepository(reopened)
+    const transcribe = vi.fn()
+    const summarize = vi.fn()
+    const service = new ProcessingService(meetings, { transcribeMeeting: transcribe }, { summarizeMeeting: summarize }, join(h.first, '..'), undefined, 'new-process')
+
+    expect(reopened.prepare('SELECT succeeded, sanitized_error FROM processing_attempts WHERE id = ?').get(attempt.id)).toEqual({ succeeded: 1, sanitized_error: null })
+    expect(service.getStatus('meeting-1').state).toBe(expectedState)
+    if (policy === 'delete_after_processing') {
+      expect(meetings.latestProcessingAttempt('meeting-1')).toMatchObject({ stage: 'cleanup', succeeded: false })
+      await service.retry('meeting-1')
+      expect(meetings.requireById('meeting-1')).toMatchObject({ status: 'completed', audioPath: null, audioByteCount: 0 })
+    } else {
+      expect(existsSync(h.first)).toBe(true)
+    }
+    expect(transcribe).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
+    reopened.close()
+  })
+
+  it('reopens a completed delete-policy meeting after summary commit before cleanup attempt creation', async () => {
+    const h = harness()
+    h.database.prepare("UPDATE meetings SET status = 'summarizing' WHERE id = ?").run('meeting-1')
+    h.meetings.completeSummary('meeting-1', [], [])
+    const databasePath = h.database.name
+    h.database.close()
+    const reopened = openDatabase(databasePath)
+    const meetings = new MeetingRepository(reopened)
+    const transcribe = vi.fn()
+    const summarize = vi.fn()
+    const service = new ProcessingService(meetings, { transcribeMeeting: transcribe }, { summarizeMeeting: summarize }, join(h.first, '..'), undefined, 'new-process')
+    expect(service.getStatus('meeting-1')).toMatchObject({ state: 'cleanup_failed', failedStage: 'cleanup', audioRequired: false })
+    await service.retry('meeting-1')
+    expect(transcribe).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
+    expect(meetings.requireById('meeting-1').audioPath).toBeNull()
+    reopened.close()
+  })
+
+  it('reopens after cleanup attempt creation and resumes deletion without AI', async () => {
+    const h = harness()
+    h.database.prepare("UPDATE meetings SET status = 'summarizing' WHERE id = ?").run('meeting-1')
+    h.meetings.completeSummary('meeting-1', [], [])
+    const cleanup = h.meetings.beginProcessingAttempt('meeting-1', 'cleanup', 'old-process')
+    const databasePath = h.database.name
+    h.database.close()
+    const reopened = openDatabase(databasePath)
+    const meetings = new MeetingRepository(reopened)
+    const transcribe = vi.fn()
+    const summarize = vi.fn()
+    const service = new ProcessingService(meetings, { transcribeMeeting: transcribe }, { summarizeMeeting: summarize }, join(h.first, '..'), undefined, 'new-process')
+    expect(reopened.prepare('SELECT succeeded, sanitized_error FROM processing_attempts WHERE id = ?').get(cleanup.id)).toMatchObject({ succeeded: 0, sanitized_error: expect.stringContaining('AUDIO_CLEANUP_INTERRUPTED') })
+    expect(service.getStatus('meeting-1').state).toBe('cleanup_failed')
+    await service.retry('meeting-1')
+    expect(transcribe).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
+    expect(meetings.requireById('meeting-1').audioPath).toBeNull()
+    reopened.close()
+  })
+
   it('preserves a legacy Task 7 nonretryable transcription failure exactly', () => {
     const h = harness()
     h.meetings.beginTranscription('meeting-1')
