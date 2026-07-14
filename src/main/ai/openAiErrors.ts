@@ -1,5 +1,3 @@
-import { redactSecrets } from './redactSecrets'
-
 export type OpenAiErrorCode =
   | 'OPENAI_API_KEY_MISSING'
   | 'OPENAI_UNAUTHORIZED'
@@ -21,6 +19,46 @@ export class OpenAiError extends Error {
   }
 }
 
+const safeDetails: Record<OpenAiErrorCode, { message: string; retryable: boolean }> = {
+  OPENAI_API_KEY_MISSING: {
+    message: 'An OpenAI API key is required.',
+    retryable: false,
+  },
+  OPENAI_UNAUTHORIZED: {
+    message: 'OpenAI rejected the API key.',
+    retryable: false,
+  },
+  OPENAI_RATE_LIMITED: {
+    message: 'OpenAI rate limit was reached. Try again later.',
+    retryable: true,
+  },
+  OPENAI_TIMEOUT: {
+    message: 'The OpenAI request timed out. Try again.',
+    retryable: true,
+  },
+  OPENAI_NETWORK: {
+    message: 'Could not reach OpenAI. Check the network connection and try again.',
+    retryable: true,
+  },
+  OPENAI_INVALID_AUDIO: {
+    message: 'OpenAI could not process this audio file.',
+    retryable: false,
+  },
+  OPENAI_MALFORMED_RESPONSE: {
+    message: 'OpenAI returned an invalid transcription response.',
+    retryable: false,
+  },
+  OPENAI_UNKNOWN: {
+    message: 'OpenAI transcription failed.',
+    retryable: false,
+  },
+}
+
+export function safeOpenAiError(code: OpenAiErrorCode): OpenAiError {
+  const details = safeDetails[code]
+  return new OpenAiError(code, details.message, details.retryable)
+}
+
 function statusOf(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null || !('status' in error)) return undefined
   return typeof error.status === 'number' ? error.status : undefined
@@ -30,9 +68,9 @@ function detailsOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function toOpenAiError(error: unknown, absolutePaths: readonly string[] = []): OpenAiError {
+export function toOpenAiError(error: unknown): OpenAiError {
   if (error instanceof OpenAiError) {
-    return new OpenAiError(error.code, redactSecrets(error.message, absolutePaths), error.retryable)
+    return safeOpenAiError(error.code)
   }
 
   const status = statusOf(error)
@@ -40,15 +78,12 @@ export function toOpenAiError(error: unknown, absolutePaths: readonly string[] =
   const raw = detailsOf(error)
   const lower = raw.toLowerCase()
   let code: OpenAiErrorCode = 'OPENAI_UNKNOWN'
-  let retryable = false
 
   if (status === 401 || status === 403) code = 'OPENAI_UNAUTHORIZED'
   else if (status === 429) {
     code = 'OPENAI_RATE_LIMITED'
-    retryable = true
   } else if (name.includes('timeout') || lower.includes('timed out') || lower.includes('timeout')) {
     code = 'OPENAI_TIMEOUT'
-    retryable = true
   } else if (
     status === 400 ||
     status === 413 ||
@@ -64,8 +99,7 @@ export function toOpenAiError(error: unknown, absolutePaths: readonly string[] =
     )
   ) {
     code = 'OPENAI_NETWORK'
-    retryable = true
   }
 
-  return new OpenAiError(code, redactSecrets(raw, absolutePaths), retryable)
+  return safeOpenAiError(code)
 }

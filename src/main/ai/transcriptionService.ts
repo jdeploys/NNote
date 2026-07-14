@@ -1,10 +1,11 @@
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { lstat, readdir, realpath } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import type { Speaker, TranscriptSegment } from '../../shared/contracts/meeting'
 import type { MeetingRepository } from '../db/meetingRepository'
 import { recordingFilePrefix } from '../recording/recordingPaths'
 import type { OpenAiGatewayPort, ProviderTranscription } from './openAiGateway'
-import { OpenAiError, toOpenAiError } from './openAiErrors'
+import { safeOpenAiError, toOpenAiError } from './openAiErrors'
 
 export interface TranscriptionResult {
   speakers: Speaker[]
@@ -13,7 +14,7 @@ export interface TranscriptionResult {
 
 function validateProviderTiming(response: ProviderTranscription): void {
   if (!Number.isFinite(response.durationSeconds) || response.durationSeconds < 0) {
-    throw new OpenAiError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription duration.', false)
+    throw safeOpenAiError('OPENAI_MALFORMED_RESPONSE')
   }
   let previousStart = 0
   for (const segment of response.segments) {
@@ -27,7 +28,7 @@ function validateProviderTiming(response: ProviderTranscription): void {
       segment.endSeconds > response.durationSeconds + 0.001 ||
       typeof segment.text !== 'string'
     ) {
-      throw new OpenAiError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned invalid transcription segments.', false)
+      throw safeOpenAiError('OPENAI_MALFORMED_RESPONSE')
     }
     previousStart = segment.startSeconds
   }
@@ -42,14 +43,14 @@ export class TranscriptionService {
 
   async transcribeMeeting(meetingId: string): Promise<TranscriptionResult> {
     this.meetings.beginTranscription(meetingId)
-    let paths: string[] = [this.recordingsDirectory]
     try {
-      paths.push(...(await this.finalizedPartPaths(meetingId)))
+      const paths = await this.finalizedPartPaths(meetingId)
       const speakers = new Map<string, Speaker>()
       const segments: TranscriptSegment[] = []
       let offsetSeconds = 0
+      const meetingPrefix = createHash('sha256').update(meetingId, 'utf8').digest('hex')
 
-      for (const [partIndex, filePath] of paths.slice(1).entries()) {
+      for (const [partIndex, filePath] of paths.entries()) {
         const response = await this.gateway.transcribe({
           filePath,
           model: 'gpt-4o-transcribe-diarize',
@@ -58,14 +59,15 @@ export class TranscriptionService {
         })
         validateProviderTiming(response)
         response.segments.forEach((segment, segmentIndex) => {
-          const speakerId = `${partIndex}:${segment.speaker}`
+          const providerSpeaker = encodeURIComponent(segment.speaker)
+          const speakerId = `${meetingPrefix}:${partIndex}:${providerSpeaker}`
           speakers.set(speakerId, {
             id: speakerId,
             meetingId,
             displayName: `Speaker ${segment.speaker}`,
           })
           segments.push({
-            id: `${partIndex}:${segmentIndex}`,
+            id: `${meetingPrefix}:${partIndex}:${providerSpeaker}:${segmentIndex}`,
             meetingId,
             speakerId,
             startMs: Math.round((offsetSeconds + segment.startSeconds) * 1_000),
@@ -78,7 +80,7 @@ export class TranscriptionService {
 
       return this.meetings.completeTranscription(meetingId, [...speakers.values()], segments)
     } catch (error) {
-      const typed = toOpenAiError(error, paths)
+      const typed = toOpenAiError(error)
       this.meetings.failTranscription(meetingId, {
         code: typed.code,
         message: typed.message,
@@ -90,6 +92,7 @@ export class TranscriptionService {
 
   private async finalizedPartPaths(meetingId: string): Promise<string[]> {
     const prefix = recordingFilePrefix(meetingId)
+    const resolvedRoot = await realpath(this.recordingsDirectory)
     const parts = (await readdir(this.recordingsDirectory))
       .map((name) => ({
         name,
@@ -101,8 +104,22 @@ export class TranscriptionService {
       .map(({ name, match }) => ({ name, index: Number(match[1]) }))
       .sort((left, right) => left.index - right.index)
     if (parts.length === 0 || parts.some((part, index) => part.index !== index)) {
-      throw new OpenAiError('OPENAI_INVALID_AUDIO', 'Finalized recording parts are missing or incomplete.', false)
+      throw safeOpenAiError('OPENAI_INVALID_AUDIO')
     }
-    return parts.map(({ name }) => join(this.recordingsDirectory, name))
+    return Promise.all(
+      parts.map(async ({ name }) => {
+        const candidate = join(this.recordingsDirectory, name)
+        const details = await lstat(candidate)
+        if (details.isSymbolicLink() || !details.isFile()) {
+          throw safeOpenAiError('OPENAI_INVALID_AUDIO')
+        }
+        const resolved = await realpath(candidate)
+        const fromRoot = relative(resolvedRoot, resolved)
+        if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+          throw safeOpenAiError('OPENAI_INVALID_AUDIO')
+        }
+        return resolved
+      }),
+    )
   }
 }

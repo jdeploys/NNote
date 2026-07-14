@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +7,7 @@ import { openDatabase } from '../../src/main/db/database'
 import { MeetingRepository } from '../../src/main/db/meetingRepository'
 import type { CredentialStore } from '../../src/main/credentials/credentialStore'
 import { OpenAiGateway, type OpenAiTranscriptionClient } from '../../src/main/ai/openAiGateway'
+import { OpenAiError, toOpenAiError } from '../../src/main/ai/openAiErrors'
 import { TranscriptionService } from '../../src/main/ai/transcriptionService'
 import { completedPartPath } from '../../src/main/recording/recordingPaths'
 import type { Meeting } from '../../src/shared/contracts/meeting'
@@ -87,6 +89,84 @@ describe('OpenAiGateway', () => {
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty('responseFormat')
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty('chunkingStrategy')
   })
+
+  it('rejects a malformed provider payload with a fixed safe error', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nnote-gateway-invalid-'))
+    directories.push(root)
+    const filePath = join(root, 'meeting.webm')
+    writeFileSync(filePath, Buffer.from([1]))
+    const credentials: CredentialStore = {
+      get: vi.fn().mockResolvedValue('placeholder'),
+      set: vi.fn(),
+      delete: vi.fn(),
+    }
+    const create = vi.fn(async (input: unknown) => {
+      for await (const _chunk of (input as { file: AsyncIterable<unknown> }).file) {
+        // consume the upload stream
+      }
+      return { duration: 'provider canary 719', segments: [] }
+    })
+    const gateway = new OpenAiGateway(credentials, () => ({
+      audio: { transcriptions: { create } },
+    }))
+
+    await expect(gateway.transcribe({
+      filePath,
+      model: 'gpt-4o-transcribe-diarize',
+      responseFormat: 'diarized_json',
+      chunkingStrategy: 'auto',
+    })).rejects.toMatchObject({
+      code: 'OPENAI_MALFORMED_RESPONSE',
+      message: 'OpenAI returned an invalid transcription response.',
+    })
+  })
+
+  it('never rethrows a raw SDK error message', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nnote-gateway-error-'))
+    directories.push(root)
+    const filePath = join(root, 'meeting.webm')
+    writeFileSync(filePath, Buffer.from([1]))
+    const create = vi.fn(async (input: unknown) => {
+      for await (const _chunk of (input as { file: AsyncIterable<unknown> }).file) {
+        // consume the upload stream
+      }
+      throw Object.assign(new Error('provider canary gateway 883'), { status: 401 })
+    })
+    const gateway = new OpenAiGateway(
+      { get: vi.fn().mockResolvedValue('placeholder'), set: vi.fn(), delete: vi.fn() },
+      () => ({ audio: { transcriptions: { create } } }),
+    )
+
+    const failure = await gateway.transcribe({
+      filePath,
+      model: 'gpt-4o-transcribe-diarize',
+      responseFormat: 'diarized_json',
+      chunkingStrategy: 'auto',
+    }).catch((error: unknown) => error)
+
+    expect(failure).toMatchObject({
+      code: 'OPENAI_UNAUTHORIZED',
+      message: 'OpenAI rejected the API key.',
+    })
+    expect(String(failure)).not.toContain('provider canary gateway 883')
+  })
+})
+
+describe('toOpenAiError', () => {
+  it.each([
+    ['401', Object.assign(new Error('provider canary 401'), { status: 401 }), 'OPENAI_UNAUTHORIZED', 'OpenAI rejected the API key.'],
+    ['429', Object.assign(new Error('provider canary 429'), { status: 429 }), 'OPENAI_RATE_LIMITED', 'OpenAI rate limit was reached. Try again later.'],
+    ['timeout', Object.assign(new Error('provider canary timeout'), { name: 'APIConnectionTimeoutError' }), 'OPENAI_TIMEOUT', 'The OpenAI request timed out. Try again.'],
+    ['network', Object.assign(new Error('provider canary network'), { name: 'APIConnectionError' }), 'OPENAI_NETWORK', 'Could not reach OpenAI. Check the network connection and try again.'],
+    ['invalid audio', Object.assign(new Error('provider canary audio'), { status: 400 }), 'OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.'],
+    ['malformed', new OpenAiError('OPENAI_MALFORMED_RESPONSE', 'provider canary malformed', false), 'OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription response.'],
+    ['unknown', new Error('provider canary unknown'), 'OPENAI_UNKNOWN', 'OpenAI transcription failed.'],
+  ])('maps %s to a fixed safe classification', (_label, input, code, message) => {
+    const result = toOpenAiError(input)
+
+    expect(result).toMatchObject({ code, message })
+    expect(result.message).not.toContain('provider canary')
+  })
 })
 
 describe('TranscriptionService', () => {
@@ -107,6 +187,7 @@ describe('TranscriptionService', () => {
     }
 
     const result = await new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')
+    const meetingPrefix = createHash('sha256').update('meeting-1').digest('hex')
 
     expect(requests.map(({ filePath }) => filePath)).toEqual([first, second])
     expect(requests[0]).toMatchObject({
@@ -115,12 +196,12 @@ describe('TranscriptionService', () => {
       chunkingStrategy: 'auto',
     })
     expect(result.speakers).toEqual([
-      { id: '0:A', meetingId: 'meeting-1', displayName: 'Speaker A' },
-      { id: '1:A', meetingId: 'meeting-1', displayName: 'Speaker A' },
+      { id: `${meetingPrefix}:0:A`, meetingId: 'meeting-1', displayName: 'Speaker A' },
+      { id: `${meetingPrefix}:1:A`, meetingId: 'meeting-1', displayName: 'Speaker A' },
     ])
     expect(result.segments).toEqual([
-      { id: '0:0', meetingId: 'meeting-1', speakerId: '0:A', startMs: 0, endMs: 2_000, text: 'Hello' },
-      { id: '1:0', meetingId: 'meeting-1', speakerId: '1:A', startMs: 6_000, endMs: 8_000, text: 'Again' },
+      { id: `${meetingPrefix}:0:A:0`, meetingId: 'meeting-1', speakerId: `${meetingPrefix}:0:A`, startMs: 0, endMs: 2_000, text: 'Hello' },
+      { id: `${meetingPrefix}:1:A:0`, meetingId: 'meeting-1', speakerId: `${meetingPrefix}:1:A`, startMs: 6_000, endMs: 8_000, text: 'Again' },
     ])
     expect(h.meetings.requireById('meeting-1').status).toBe('summarizing')
     expect(h.meetings.listTranscript('meeting-1')).toEqual(result.segments)
@@ -157,7 +238,7 @@ describe('TranscriptionService', () => {
     h.database.prepare('INSERT INTO summary_sections (id, meeting_id, kind, content_json, order_index) VALUES (?, ?, ?, ?, ?)').run('summary-1', 'meeting-1', 'paragraph', JSON.stringify({ text: 'Existing summary' }), 0)
     h.database.prepare('INSERT INTO speakers (id, meeting_id, display_name) VALUES (?, ?, ?)').run('old', 'meeting-1', 'Old')
     h.meetings.replaceTranscript('meeting-1', [{ id: 'old:0', meetingId: 'meeting-1', speakerId: 'old', startMs: 0, endMs: 10, text: 'Existing transcript' }])
-    const gateway = { async transcribe() { throw Object.assign(new Error(`Authorization: Bearer sk-live-secret failed at ${part}`), { status: 429 }) } }
+    const gateway = { async transcribe() { throw Object.assign(new Error(`provider canary 991 Authorization: Bearer sk-live-secret failed at ${part}`), { status: 429 }) } }
 
     await expect(new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
 
@@ -169,6 +250,10 @@ describe('TranscriptionService', () => {
     expect(JSON.parse(attempt.sanitized_error)).toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
     expect(attempt.sanitized_error).not.toContain('sk-live-secret')
     expect(attempt.sanitized_error).not.toContain(part)
+    expect(attempt.sanitized_error).not.toContain('provider canary 991')
+    expect(JSON.parse(attempt.sanitized_error)).toMatchObject({
+      message: 'OpenAI rate limit was reached. Try again later.',
+    })
     h.database.close()
   })
 
@@ -194,7 +279,85 @@ describe('TranscriptionService', () => {
 
     const { sanitized_error: sanitizedError } = h.database.prepare('SELECT sanitized_error FROM processing_attempts WHERE meeting_id = ?').get('meeting-1') as { sanitized_error: string }
     expect(sanitizedError).not.toContain(h.recordingsDirectory)
-    expect(sanitizedError).toContain('[REDACTED]')
+    expect(JSON.parse(sanitizedError)).toMatchObject({ message: 'OpenAI transcription failed.' })
+    h.database.close()
+  })
+
+  it('uses globally unique stable IDs across meetings in one database', async () => {
+    const h = harness()
+    h.meetings.create({
+      ...h.meetings.requireById('meeting-1'),
+      id: 'meeting-2',
+      title: 'Second meeting',
+      status: 'recorded',
+    })
+    writeFileSync(completedPartPath(h.recordingsDirectory, 'meeting-1', 0), Buffer.from([1]))
+    writeFileSync(completedPartPath(h.recordingsDirectory, 'meeting-2', 0), Buffer.from([2]))
+    const gateway = {
+      async transcribe() {
+        return {
+          durationSeconds: 1,
+          segments: [{ speaker: 'A', startSeconds: 0, endSeconds: 1, text: 'Same provider labels' }],
+        }
+      },
+    }
+    const service = new TranscriptionService(h.meetings, gateway, h.recordingsDirectory)
+
+    const first = await service.transcribeMeeting('meeting-1')
+    const second = await service.transcribeMeeting('meeting-2')
+
+    expect(first.speakers[0]?.id).not.toBe(second.speakers[0]?.id)
+    expect(first.segments[0]?.id).not.toBe(second.segments[0]?.id)
+    expect(h.meetings.listTranscript('meeting-1')).toEqual(first.segments)
+    expect(h.meetings.listTranscript('meeting-2')).toEqual(second.segments)
+    h.database.close()
+  })
+
+  it('keeps stable IDs and a user-renamed display name when the same meeting is reprocessed', async () => {
+    const h = harness()
+    writeFileSync(completedPartPath(h.recordingsDirectory, 'meeting-1', 0), Buffer.from([1]))
+    const gateway = {
+      async transcribe() {
+        return {
+          durationSeconds: 1,
+          segments: [{ speaker: 'A', startSeconds: 0, endSeconds: 1, text: 'Transcript' }],
+        }
+      },
+    }
+    const service = new TranscriptionService(h.meetings, gateway, h.recordingsDirectory)
+    const first = await service.transcribeMeeting('meeting-1')
+    h.database.prepare("UPDATE meetings SET status = 'completed' WHERE id = ?").run('meeting-1')
+    h.database.prepare('UPDATE speakers SET display_name = ? WHERE id = ?').run('홍길동', first.speakers[0]?.id)
+
+    const second = await service.transcribeMeeting('meeting-1')
+
+    expect(second.speakers[0]?.id).toBe(first.speakers[0]?.id)
+    expect(second.segments[0]?.id).toBe(first.segments[0]?.id)
+    expect(h.meetings.listSpeakers('meeting-1')[0]?.displayName).toBe('홍길동')
+    h.database.close()
+  })
+
+  it('rejects a symlinked recording part before invoking the gateway', async (context) => {
+    const h = harness()
+    const outside = join(h.root, 'outside.webm')
+    const linkedPart = completedPartPath(h.recordingsDirectory, 'meeting-1', 0)
+    writeFileSync(outside, Buffer.from([1]))
+    try {
+      symlinkSync(outside, linkedPart, 'file')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+        h.database.close()
+        context.skip()
+        return
+      }
+      throw error
+    }
+    const gateway = { transcribe: vi.fn() }
+
+    await expect(new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({
+      code: 'OPENAI_INVALID_AUDIO',
+    })
+    expect(gateway.transcribe).not.toHaveBeenCalled()
     h.database.close()
   })
 })

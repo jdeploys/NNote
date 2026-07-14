@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs'
 import OpenAI from 'openai'
 import { z } from 'zod'
 import type { CredentialStore } from '../credentials/credentialStore'
-import { OpenAiError } from './openAiErrors'
+import { safeOpenAiError, toOpenAiError } from './openAiErrors'
 
 export interface TranscriptionRequest {
   filePath: string
@@ -56,22 +56,23 @@ export class OpenAiGateway implements OpenAiGatewayPort {
   async transcribe(request: TranscriptionRequest): Promise<ProviderTranscription> {
     const apiKey = await this.credentials.get()
     if (apiKey === null) {
-      throw new OpenAiError(
-        'OPENAI_API_KEY_MISSING',
-        'An OpenAI API key is required.',
-        false,
-      )
+      throw safeOpenAiError('OPENAI_API_KEY_MISSING')
     }
 
-    const response = await this.clientFactory(apiKey).audio.transcriptions.create({
-      file: createReadStream(request.filePath),
-      model: request.model,
-      response_format: request.responseFormat,
-      chunking_strategy: request.chunkingStrategy,
-    })
+    let response: unknown
+    try {
+      response = await this.clientFactory(apiKey).audio.transcriptions.create({
+        file: createReadStream(request.filePath),
+        model: request.model,
+        response_format: request.responseFormat,
+        chunking_strategy: request.chunkingStrategy,
+      })
+    } catch (error) {
+      throw toOpenAiError(error)
+    }
     const parsed = responseSchema.safeParse(response)
     if (!parsed.success) {
-      throw new OpenAiError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription response.', false)
+      throw safeOpenAiError('OPENAI_MALFORMED_RESPONSE')
     }
 
     let previousStart = 0
@@ -81,11 +82,7 @@ export class OpenAiGateway implements OpenAiGatewayPort {
         segment.start < previousStart ||
         segment.end > parsed.data.duration + 0.001
       ) {
-        throw new OpenAiError(
-          'OPENAI_MALFORMED_RESPONSE',
-          'OpenAI returned invalid transcription timestamps.',
-          false,
-        )
+        throw safeOpenAiError('OPENAI_MALFORMED_RESPONSE')
       }
       previousStart = segment.start
     }

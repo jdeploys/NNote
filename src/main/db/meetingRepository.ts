@@ -272,8 +272,7 @@ export class MeetingRepository {
       assertMeetingTransition(meeting.status, 'summarizing')
       const upsertSpeaker = this.database.prepare(
         `INSERT INTO speakers (id, meeting_id, display_name) VALUES (?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name
-         WHERE speakers.meeting_id = excluded.meeting_id`,
+         ON CONFLICT(id) DO NOTHING`,
       )
       for (const value of speakers) {
         const speaker = SpeakerSchema.parse(value)
