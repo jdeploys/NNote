@@ -16,6 +16,7 @@ function toTemplate(row: TemplateRow): SummaryTemplate {
   return SummaryTemplateSchema.parse({
     id: row.id,
     name: row.name,
+    isDefault: row.id === 'default',
     sections: JSON.parse(row.sections_json) as unknown,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -72,8 +73,12 @@ export class TemplateRepository {
 
   list(): SummaryTemplate[] {
     const rows = this.database
-      .prepare('SELECT * FROM summary_templates ORDER BY name, id')
+      .prepare("SELECT * FROM summary_templates ORDER BY CASE WHEN id = 'default' THEN 0 ELSE 1 END, created_at, id")
       .all() as TemplateRow[]
     return rows.map(toTemplate)
+  }
+
+  delete(id: string): boolean {
+    return this.database.prepare('DELETE FROM summary_templates WHERE id = ?').run(id).changes > 0
   }
 }

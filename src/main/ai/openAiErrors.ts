@@ -6,6 +6,9 @@ export type OpenAiErrorCode =
   | 'OPENAI_NETWORK'
   | 'OPENAI_INVALID_AUDIO'
   | 'OPENAI_MALFORMED_RESPONSE'
+  | 'OPENAI_MALFORMED_SUMMARY'
+  | 'OPENAI_SUMMARY_REFUSED'
+  | 'OPENAI_SUMMARY_INCOMPLETE'
   | 'OPENAI_UNKNOWN'
 
 export class OpenAiError extends Error {
@@ -47,6 +50,18 @@ const safeDetails: Record<OpenAiErrorCode, { message: string; retryable: boolean
   OPENAI_MALFORMED_RESPONSE: {
     message: 'OpenAI returned an invalid transcription response.',
     retryable: false,
+  },
+  OPENAI_MALFORMED_SUMMARY: {
+    message: 'OpenAI returned an invalid summary response.',
+    retryable: false,
+  },
+  OPENAI_SUMMARY_REFUSED: {
+    message: 'OpenAI declined to summarize this transcript.',
+    retryable: false,
+  },
+  OPENAI_SUMMARY_INCOMPLETE: {
+    message: 'OpenAI did not finish the summary. Try again.',
+    retryable: true,
   },
   OPENAI_UNKNOWN: {
     message: 'OpenAI transcription failed.',

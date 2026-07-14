@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DesktopApi } from '../shared/contracts/desktopApi'
 import type { RecordingChunk } from '../shared/contracts/recording'
+import type { CreateTemplateInput, UpdateTemplateInput } from '../shared/contracts/template'
 
 const settings: DesktopApi['settings'] = Object.freeze({
   saveApiKey: (value: string) => ipcRenderer.invoke('settings:save-api-key', value),
@@ -25,6 +26,14 @@ const recovery: DesktopApi['recovery'] = Object.freeze({
     ipcRenderer.invoke('recovery:discard', meetingId, options),
 })
 
-const desktopApi: DesktopApi = Object.freeze({ settings, recording, recovery })
+const templates: DesktopApi['templates'] = Object.freeze({
+  list: () => ipcRenderer.invoke('templates:list'),
+  create: (input: CreateTemplateInput) => ipcRenderer.invoke('templates:create', input),
+  update: (id: string, input: UpdateTemplateInput) => ipcRenderer.invoke('templates:update', id, input),
+  reorderSections: (id: string, orderedSectionIds: string[]) => ipcRenderer.invoke('templates:reorder-sections', id, orderedSectionIds),
+  delete: (id: string) => ipcRenderer.invoke('templates:delete', id),
+})
+
+const desktopApi: DesktopApi = Object.freeze({ settings, recording, recovery, templates })
 
 contextBridge.exposeInMainWorld('desktopApi', desktopApi)

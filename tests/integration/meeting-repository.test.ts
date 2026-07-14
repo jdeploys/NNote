@@ -126,9 +126,10 @@ describe('TemplateRepository', () => {
     const template: SummaryTemplate = {
       id: 'template-1',
       name: 'Decision review',
+      isDefault: false,
       sections: [
-        { id: 'decisions', title: 'Decisions', kind: 'decisions', prompt: 'List decisions.' },
-        { id: 'actions', title: 'Actions', kind: 'action-items', prompt: 'List actions.' },
+        { id: '10000000-0000-4000-8000-000000000011', title: 'Decisions', kind: 'bullet_list', prompt: 'List decisions.' },
+        { id: '10000000-0000-4000-8000-000000000012', title: 'Actions', kind: 'action_items', prompt: 'List actions.' },
       ],
       createdAt: '2026-07-14T12:00:00.000Z',
       updatedAt: '2026-07-14T12:00:00.000Z',

@@ -8,6 +8,12 @@ import {
   type Speaker,
   type TranscriptSegment,
 } from '../../shared/contracts/meeting'
+import {
+  StoredActionItemSchema,
+  StoredSummarySectionSchema,
+  type StoredActionItem,
+  type StoredSummarySection,
+} from '../../shared/contracts/summary'
 import { assertMeetingTransition } from '../domain/meetingState'
 
 interface MeetingRow {
@@ -36,6 +42,24 @@ interface SpeakerRow {
   id: string
   meeting_id: string
   display_name: string
+}
+
+interface SummarySectionRow {
+  id: string
+  meeting_id: string
+  template_section_id: string
+  kind: string
+  content_json: string
+  order_index: number
+}
+
+interface ActionItemRow {
+  id: string
+  meeting_id: string
+  content: string
+  assignee_speaker_id: string | null
+  due_at: string | null
+  completed: number
 }
 
 function toMeeting(row: MeetingRow): Meeting {
@@ -249,6 +273,81 @@ export class MeetingRepository {
         displayName: row.display_name,
       }),
     )
+  }
+
+  renameSpeaker(meetingId: string, speakerId: string, displayName: string): Speaker {
+    const name = displayName.trim()
+    if (name.length === 0) throw new Error('Speaker display name is required')
+    return inTransaction(this.database, () => {
+      const result = this.database
+        .prepare('UPDATE speakers SET display_name = ? WHERE meeting_id = ? AND id = ?')
+        .run(name, meetingId, speakerId)
+      if (result.changes !== 1) throw new Error(`Speaker ${speakerId} was not found`)
+      return this.listSpeakers(meetingId).find(({ id }) => id === speakerId)!
+    })
+  }
+
+  replaceSummary(
+    meetingId: string,
+    sections: readonly Omit<StoredSummarySection, 'id' | 'meetingId'>[],
+    actionItems: readonly Omit<StoredActionItem, 'id' | 'meetingId' | 'completed'>[],
+  ): { sections: StoredSummarySection[]; actionItems: StoredActionItem[] } {
+    return inTransaction(this.database, () => {
+      this.requireById(meetingId)
+      this.database.prepare('DELETE FROM action_items WHERE meeting_id = ?').run(meetingId)
+      this.database.prepare('DELETE FROM summary_sections WHERE meeting_id = ?').run(meetingId)
+      const insertSection = this.database.prepare(
+        `INSERT INTO summary_sections
+          (id, meeting_id, template_section_id, kind, content_json, order_index)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      for (const value of sections) {
+        const section = StoredSummarySectionSchema.parse({ ...value, id: randomUUID(), meetingId })
+        insertSection.run(section.id, meetingId, section.templateSectionId, section.kind, JSON.stringify({ text: section.text, items: section.items }), section.orderIndex)
+      }
+      const insertAction = this.database.prepare(
+        `INSERT INTO action_items
+          (id, meeting_id, content, assignee_speaker_id, due_at, completed)
+         VALUES (?, ?, ?, ?, ?, 0)`,
+      )
+      for (const value of actionItems) {
+        const item = StoredActionItemSchema.parse({ ...value, id: randomUUID(), meetingId, completed: false })
+        insertAction.run(item.id, meetingId, item.content, item.assigneeSpeakerId, item.dueAt)
+      }
+      return { sections: this.listSummarySections(meetingId), actionItems: this.listActionItems(meetingId) }
+    })
+  }
+
+  listSummarySections(meetingId: string): StoredSummarySection[] {
+    const rows = this.database.prepare(
+      'SELECT * FROM summary_sections WHERE meeting_id = ? ORDER BY order_index, id',
+    ).all(meetingId) as SummarySectionRow[]
+    return rows.map((row) => {
+      const content = JSON.parse(row.content_json) as { text?: unknown; items?: unknown }
+      return StoredSummarySectionSchema.parse({
+        id: row.id,
+        meetingId: row.meeting_id,
+        templateSectionId: row.template_section_id,
+        kind: row.kind,
+        text: content.text,
+        items: content.items,
+        orderIndex: row.order_index,
+      })
+    })
+  }
+
+  listActionItems(meetingId: string): StoredActionItem[] {
+    const rows = this.database.prepare(
+      'SELECT * FROM action_items WHERE meeting_id = ? ORDER BY rowid',
+    ).all(meetingId) as ActionItemRow[]
+    return rows.map((row) => StoredActionItemSchema.parse({
+      id: row.id,
+      meetingId: row.meeting_id,
+      content: row.content,
+      assigneeSpeakerId: row.assignee_speaker_id,
+      dueAt: row.due_at,
+      completed: row.completed === 1,
+    }))
   }
 
   beginTranscription(meetingId: string): Meeting {
