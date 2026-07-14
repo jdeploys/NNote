@@ -5,6 +5,8 @@
   },
   "include": [
     "electron.vite.config.ts",
+    "vitest.config.ts",
+    "playwright.e2e.config.ts",
     "src/main",
     "src/preload",
     "src/shared"

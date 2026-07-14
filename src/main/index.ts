@@ -24,13 +24,19 @@ import { registerMeetingHandlers } from './ipc/registerMeetingHandlers'
 import { registerArchiveHandlers } from './ipc/registerArchiveHandlers'
 import { reconcileImportJournals } from './archive/importMeeting'
 import { bootstrapAfterImportRecovery } from './app/archiveStartup'
+import { parsePackageVerificationRequest } from './app/packageVerification'
+import { runPackageRuntimeVerification } from './app/runtimePackageVerification'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
 }])
 
-startSingleInstanceApp(app, BrowserWindow, () => {
+const verificationRequest = parsePackageVerificationRequest(process.argv)
+
+if (verificationRequest !== null) {
+  app.whenReady().then(() => runPackageRuntimeVerification(verificationRequest.resultPath))
+} else startSingleInstanceApp(app, BrowserWindow, () => {
   app.whenReady().then(async () => {
     const userDataDirectory = app.getPath('userData')
     const database = openDatabase(join(userDataDirectory, 'nnote.sqlite'))
