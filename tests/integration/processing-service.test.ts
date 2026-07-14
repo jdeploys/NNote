@@ -1,8 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProcessingService } from '../../src/main/ai/processingService'
+import { TranscriptionService } from '../../src/main/ai/transcriptionService'
+import { PROCESS_OWNER_ID } from '../../src/main/ai/processingOwner'
 import { openDatabase } from '../../src/main/db/database'
 import { MeetingRepository } from '../../src/main/db/meetingRepository'
 import { completedPartPath } from '../../src/main/recording/recordingPaths'
@@ -18,17 +20,16 @@ function harness(options: { policy?: AudioPolicy; status?: MeetingStatus; failSu
   const database = openDatabase(join(root, 'nnote.sqlite'))
   const meetings = new MeetingRepository(database)
   const now = '2026-07-15T00:00:00.000Z'
+  const first = completedPartPath(recordings, 'meeting-1', 0)
+  const second = completedPartPath(recordings, 'meeting-1', 1)
   meetings.create({
     id: 'meeting-1', title: 'Meeting', createdAt: now, updatedAt: now, durationMs: 1_000,
     status: options.status ?? 'recorded', audioPolicy: options.policy ?? 'delete_after_processing',
-    audioPath: 'part-0.webm', audioByteCount: 6, selectedTemplateId: null,
+    audioPath: basename(first), audioByteCount: 6, selectedTemplateId: null,
   })
-  const first = completedPartPath(recordings, 'meeting-1', 0)
-  const second = completedPartPath(recordings, 'meeting-1', 1)
   writeFileSync(first, 'abc')
   writeFileSync(second, 'def')
   const transcribe = vi.fn(async () => {
-    meetings.beginTranscription('meeting-1')
     return meetings.completeTranscription(
       'meeting-1',
       [{ id: 'speaker-1', meetingId: 'meeting-1', displayName: 'Speaker 1' }],
@@ -103,7 +104,6 @@ describe('ProcessingService', () => {
   it('retries transcription failures from transcription and requires audio', async () => {
     const h = harness()
     h.transcribe.mockImplementationOnce(async () => {
-      h.meetings.beginTranscription('meeting-1')
       throw Object.assign(new Error('network'), { code: 'OPENAI_NETWORK', retryable: true })
     })
     await expect(h.service.process('meeting-1')).rejects.toThrow('network')
@@ -116,7 +116,6 @@ describe('ProcessingService', () => {
   it('keeps the orchestration attempt authoritative when transcription records its failure', async () => {
     const h = harness()
     h.transcribe.mockImplementationOnce(async () => {
-      h.meetings.beginTranscription('meeting-1')
       h.meetings.failTranscription('meeting-1', { code: 'OPENAI_NETWORK', message: 'safe', retryable: true })
       throw Object.assign(new Error('safe'), { code: 'OPENAI_NETWORK', retryable: true })
     })
@@ -135,6 +134,98 @@ describe('ProcessingService', () => {
     expect(h.transcribe).toHaveBeenCalledTimes(1)
     expect(h.summarize).toHaveBeenCalledTimes(1)
     expect(h.meetings.requireById('meeting-1')).toMatchObject({ audioPath: null, audioByteCount: 0 })
+    h.database.close()
+  })
+
+  it('deletes non-primary parts first and preserves coherent primary metadata when primary deletion fails', async () => {
+    const h = harness({ policy: 'delete_after_processing' })
+    const removes: string[] = []
+    const service = new ProcessingService(h.meetings, { transcribeMeeting: h.transcribe }, { summarizeMeeting: h.summarize }, join(h.first, '..'), {
+      remove: async (path) => {
+        removes.push(path)
+        if (path === h.first) throw Object.assign(new Error('locked primary'), { code: 'EBUSY' })
+        rmSync(path, { force: true })
+      },
+    })
+    await service.process('meeting-1')
+    expect(removes).toEqual([h.second, h.first])
+    expect(existsSync(h.second)).toBe(false)
+    expect(existsSync(h.first)).toBe(true)
+    expect(h.meetings.requireById('meeting-1')).toMatchObject({ audioPath: basename(h.first), audioByteCount: 3, status: 'completed' })
+    await h.service.retry('meeting-1')
+    expect(h.meetings.requireById('meeting-1')).toMatchObject({ audioPath: null, audioByteCount: 0 })
+    h.database.close()
+  })
+
+  it.each([
+    ['transcribing', true],
+    ['summarizing', false],
+  ] as const)('reconciles an unfinished %s attempt after database reopen without calling AI', async (stage, audioRequired) => {
+    const h = harness({ policy: 'keep' })
+    h.meetings.beginProcessingAttempt('meeting-1', stage, 'old-process')
+    stage === 'transcribing' ? h.meetings.beginTranscription('meeting-1') : h.database.prepare("UPDATE meetings SET status = 'summarizing' WHERE id = ?").run('meeting-1')
+    const databasePath = h.database.name
+    h.database.close()
+    const reopened = openDatabase(databasePath)
+    const meetings = new MeetingRepository(reopened)
+    const transcribe = vi.fn()
+    const summarize = vi.fn()
+    const service = new ProcessingService(meetings, { transcribeMeeting: transcribe }, { summarizeMeeting: summarize }, join(h.first, '..'), undefined, 'new-process')
+    expect(service.getStatus('meeting-1')).toMatchObject({
+      state: 'failed', failedStage: stage, retryable: true, audioRequired,
+      error: { code: 'PROCESSING_INTERRUPTED', message: 'Processing was interrupted. Try again.' },
+    })
+    expect(transcribe).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
+    reopened.close()
+  })
+
+  it('preserves a legacy Task 7 nonretryable transcription failure exactly', () => {
+    const h = harness()
+    h.meetings.beginTranscription('meeting-1')
+    h.meetings.failTranscription('meeting-1', { code: 'OPENAI_UNAUTHORIZED', message: 'OpenAI rejected the API key.', retryable: false })
+    expect(h.service.getStatus('meeting-1')).toMatchObject({
+      failedStage: 'transcribing', retryable: false, audioRequired: true,
+      error: { code: 'OPENAI_UNAUTHORIZED', message: 'OpenAI rejected the API key.' },
+    })
+    h.database.close()
+  })
+
+  it('isolates throwing progress observers so completed processing is never stranded', async () => {
+    const h = harness({ policy: 'keep' })
+    h.service.subscribe(() => { throw new Error('observer failed') })
+    await expect(h.service.process('meeting-1')).resolves.toMatchObject({ state: 'completed' })
+    expect(h.meetings.requireById('meeting-1').status).toBe('completed')
+    h.database.close()
+  })
+
+  it('rejects a direct transcription race before the competing gateway request', async () => {
+    const h = harness({ policy: 'keep' })
+    let release!: () => void
+    h.transcribe.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(h.meetings.completeTranscription('meeting-1', [], [])) }))
+    const first = h.service.process('meeting-1')
+    const competingGateway = { transcribe: vi.fn() }
+    const direct = new TranscriptionService(h.meetings, competingGateway, join(h.first, '..'))
+    await expect(direct.transcribeMeeting('meeting-1')).rejects.toThrow(/already running/i)
+    expect(competingGateway.transcribe).not.toHaveBeenCalled()
+    release()
+    await first
+    h.database.close()
+  })
+
+  it('does not reconcile a persisted live direct transcription owner as stale in the same process', async () => {
+    const h = harness({ policy: 'keep' })
+    const attempt = h.meetings.beginProcessingAttempt('meeting-1', 'transcription', PROCESS_OWNER_ID)
+    h.meetings.beginTranscription('meeting-1')
+    const competingTranscribe = vi.fn()
+    const competing = new ProcessingService(h.meetings, { transcribeMeeting: competingTranscribe }, { summarizeMeeting: vi.fn() }, join(h.first, '..'))
+    const competingResult = await competing.process('meeting-1').catch((error: unknown) => error)
+    expect(competingResult).toBeInstanceOf(Error)
+    expect(String(competingResult)).toMatch(/already running|recorded meeting/i)
+    expect(competingTranscribe).not.toHaveBeenCalled()
+    expect(h.meetings.requireById('meeting-1').status).toBe('transcribing')
+    h.meetings.failTranscription('meeting-1', { code: 'OPENAI_NETWORK', message: 'safe', retryable: true })
+    h.meetings.finishProcessingAttempt(attempt.id, { succeeded: false, error: { code: 'OPENAI_NETWORK', message: 'safe', retryable: true } })
     h.database.close()
   })
 

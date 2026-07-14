@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProcessingStatus } from '../../src/renderer/src/features/meetings/ProcessingStatus'
+
+afterEach(cleanup)
 
 describe('ProcessingStatus', () => {
   it('shows the exact stage and disables duplicate processing while active', () => {
@@ -22,5 +25,23 @@ describe('ProcessingStatus', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('offline')
     fireEvent.click(screen.getByRole('button', { name: '요약 다시 시도' }))
     await waitFor(() => expect(retry).toHaveBeenCalledTimes(2))
+  })
+
+  it('renders completed state without a start action', () => {
+    render(<ProcessingStatus meetingId="m1" processing={{ getStatus: vi.fn(), process: vi.fn(), retry: vi.fn(), onProgress: vi.fn(() => () => {}) }} initialStatus={{ meetingId: 'm1', state: 'completed', failedStage: null, retryable: false, audioRequired: false, error: null }} />)
+    expect(screen.getByText('처리 완료')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('resets state when reused for another meeting and chooses process rather than stale retry', async () => {
+    const process = vi.fn().mockResolvedValue({ meetingId: 'm2', state: 'transcribing', failedStage: null, retryable: false, audioRequired: true, error: null })
+    const retry = vi.fn()
+    const processing = { getStatus: vi.fn(), process, retry, onProgress: vi.fn(() => () => {}) }
+    const { rerender } = render(<ProcessingStatus meetingId="m1" processing={processing} initialStatus={{ meetingId: 'm1', state: 'failed', failedStage: 'summarizing', retryable: true, audioRequired: false, error: { code: 'X', message: 'old' } }} />)
+    rerender(<ProcessingStatus meetingId="m2" processing={processing} initialStatus={{ meetingId: 'm2', state: 'recorded', failedStage: null, retryable: false, audioRequired: true, error: null }} />)
+    fireEvent.click(screen.getByRole('button', { name: '전사 및 요약 시작' }))
+    await waitFor(() => expect(process).toHaveBeenCalledWith('m2'))
+    expect(retry).not.toHaveBeenCalled()
+    expect(screen.queryByText('old')).not.toBeInTheDocument()
   })
 })

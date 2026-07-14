@@ -86,15 +86,32 @@ const migration1 = `
   PRAGMA user_version = 1;
 `
 
+const migration2 = `
+  ALTER TABLE processing_attempts ADD COLUMN owner_id TEXT;
+  CREATE UNIQUE INDEX processing_attempts_one_active_per_meeting
+    ON processing_attempts(meeting_id) WHERE finished_at IS NULL;
+  PRAGMA user_version = 2;
+`
+
 export function runMigrations(database: Database.Database): void {
   const version = database.pragma('user_version', { simple: true }) as number
-  if (version > 1) {
-    throw new Error(`Database version ${version} is newer than supported version 1`)
+  if (version > 2) {
+    throw new Error(`Database version ${version} is newer than supported version 2`)
   }
   if (version === 0) {
     database.exec('BEGIN IMMEDIATE')
     try {
       database.exec(migration1)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+  if ((database.pragma('user_version', { simple: true }) as number) === 1) {
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.exec(migration2)
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')

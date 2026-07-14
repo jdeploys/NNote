@@ -7,6 +7,11 @@ export function ProcessingStatus({ meetingId, processing, initialStatus }: { mee
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => processing.onProgress((next) => { if (next.meetingId === meetingId) setStatus(next) }), [meetingId, processing])
+  useEffect(() => {
+    setStatus(initialStatus)
+    setPending(false)
+    setError(null)
+  }, [meetingId, initialStatus])
 
   const active = pending || status.state === 'transcribing' || status.state === 'summarizing'
   const label = status.state === 'transcribing' ? '전사 중'
@@ -36,8 +41,8 @@ export function ProcessingStatus({ meetingId, processing, initialStatus }: { mee
     <p>{status.audioRequired ? '원본 오디오 필요' : '원본 오디오 불필요'}</p>
     {status.error && <p>{status.error.message}</p>}
     {error && <p role="alert">{error}</p>}
-    <button type="button" disabled={active || (status.failedStage !== null && !status.retryable)} onClick={() => void submit()}>
+    {status.state !== 'completed' && <button type="button" disabled={active || (status.failedStage !== null && !status.retryable)} onClick={() => void submit()}>
       {active ? '처리 중' : action}
-    </button>
+    </button>}
   </section>
 }

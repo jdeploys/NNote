@@ -1,10 +1,11 @@
 import { lstat, readdir, realpath, rm } from 'node:fs/promises'
-import { isAbsolute, join, relative, sep } from 'node:path'
-import type { MeetingRepository, ProcessingStage } from '../db/meetingRepository'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import type { MeetingRepository, ProcessingAttempt, ProcessingStage } from '../db/meetingRepository'
 import { recordingFilePrefix } from '../recording/recordingPaths'
 import type { ProcessingStatus } from '../../shared/contracts/processing'
+import { PROCESS_OWNER_ID } from './processingOwner'
 
-interface TranscriptionPort { transcribeMeeting(meetingId: string): Promise<unknown> }
+interface TranscriptionPort { transcribeMeeting(meetingId: string, attempt?: { attemptId: string; ownerId: string }): Promise<unknown> }
 interface SummaryPort { summarizeMeeting(meetingId: string): Promise<unknown> }
 interface FilePort { remove(path: string): Promise<void> }
 
@@ -35,7 +36,10 @@ export class ProcessingService {
     private readonly summary: SummaryPort,
     private readonly recordingsDirectory: string,
     private readonly files: FilePort = { remove: (path) => rm(path, { force: true }) },
-  ) {}
+    private readonly ownerId: string = PROCESS_OWNER_ID,
+  ) {
+    this.meetings.reconcileInterruptedProcessing(ownerId)
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
@@ -67,7 +71,7 @@ export class ProcessingService {
     return this.lock(meetingId, async () => {
       const meeting = this.meetings.requireById(meetingId)
       if (meeting.status !== 'recorded') throw new Error('Only a recorded meeting can start processing')
-      await this.runStage(meetingId, 'transcribing', () => this.meetings.beginTranscription(meetingId), () => this.transcription.transcribeMeeting(meetingId))
+      await this.runStage(meetingId, 'transcribing', () => this.meetings.beginTranscription(meetingId), (attempt) => this.transcription.transcribeMeeting(meetingId, { attemptId: attempt.id, ownerId: this.ownerId }))
       await this.runStage(meetingId, 'summarizing', undefined, () => this.summary.summarizeMeeting(meetingId))
       await this.applyRetention(meetingId)
       return this.getStatus(meetingId)
@@ -84,7 +88,7 @@ export class ProcessingService {
         await this.runStage(meetingId, 'summarizing', () => this.meetings.beginSummarization(meetingId), () => this.summary.summarizeMeeting(meetingId))
         await this.applyRetention(meetingId)
       } else {
-        await this.runStage(meetingId, 'transcribing', () => this.meetings.beginTranscription(meetingId), () => this.transcription.transcribeMeeting(meetingId))
+        await this.runStage(meetingId, 'transcribing', () => this.meetings.beginTranscription(meetingId), (attempt) => this.transcription.transcribeMeeting(meetingId, { attemptId: attempt.id, ownerId: this.ownerId }))
         await this.runStage(meetingId, 'summarizing', undefined, () => this.summary.summarizeMeeting(meetingId))
         await this.applyRetention(meetingId)
       }
@@ -102,13 +106,13 @@ export class ProcessingService {
     meetingId: string,
     stage: Exclude<ProcessingStage, 'cleanup'>,
     prepare: (() => unknown) | undefined,
-    request: () => Promise<unknown>,
+    request: (attempt: ProcessingAttempt) => Promise<unknown>,
   ): Promise<void> {
-    const attempt = this.meetings.beginProcessingAttempt(meetingId, stage)
+    const attempt = this.meetings.beginProcessingAttempt(meetingId, stage, this.ownerId)
     try {
       prepare?.()
       this.emit(this.getStatus(meetingId))
-      await request()
+      await request(attempt)
     } catch (error) {
       const failure = safeFailure(error)
       this.meetings.failProcessing(meetingId)
@@ -123,9 +127,18 @@ export class ProcessingService {
   private async applyRetention(meetingId: string): Promise<void> {
     const meeting = this.meetings.requireById(meetingId)
     if (meeting.status !== 'completed' || meeting.audioPolicy === 'keep' || meeting.audioPath === null) return
-    const attempt = this.meetings.beginProcessingAttempt(meetingId, 'cleanup')
+    const attempt = this.meetings.beginProcessingAttempt(meetingId, 'cleanup', this.ownerId)
     try {
-      for (const path of await this.trustedAudioPaths(meetingId)) await this.files.remove(path)
+      const parts = await this.trustedAudioPaths(meetingId, meeting.audioPath)
+      let remainingBytes = parts.reduce((total, part) => total + part.byteCount, 0)
+      if (parts.length > 0 && remainingBytes !== meeting.audioByteCount) {
+        this.meetings.updateAudioCleanupProgress(meetingId, remainingBytes)
+      }
+      for (const part of parts) {
+        await this.files.remove(part.path)
+        remainingBytes -= part.byteCount
+        if (!part.primary) this.meetings.updateAudioCleanupProgress(meetingId, remainingBytes)
+      }
       this.meetings.completeAudioCleanup(meetingId, attempt.id)
       this.emit(this.getStatus(meetingId))
     } catch (error) {
@@ -135,7 +148,11 @@ export class ProcessingService {
     }
   }
 
-  private async trustedAudioPaths(meetingId: string): Promise<string[]> {
+  private async trustedAudioPaths(
+    meetingId: string,
+    primaryRelativePath: string,
+  ): Promise<Array<{ path: string; byteCount: number; primary: boolean }>> {
+    if (basename(primaryRelativePath) !== primaryRelativePath) throw new Error('Unsafe primary recording path')
     const prefix = recordingFilePrefix(meetingId)
     let names: string[]
     try { names = await readdir(this.recordingsDirectory) } catch (error) {
@@ -144,7 +161,7 @@ export class ProcessingService {
     }
     const root = await realpath(this.recordingsDirectory)
     const matches = names.filter((name) => name.startsWith(prefix) && /^part-\d+\.webm$/.test(name.slice(prefix.length)))
-    const paths: string[] = []
+    const paths: Array<{ path: string; byteCount: number; primary: boolean }> = []
     for (const name of matches) {
       const candidate = join(this.recordingsDirectory, name)
       const details = await lstat(candidate)
@@ -152,10 +169,18 @@ export class ProcessingService {
       const resolved = await realpath(candidate)
       const fromRoot = relative(root, resolved)
       if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) throw new Error('Unsafe recording path')
-      paths.push(resolved)
+      paths.push({ path: resolved, byteCount: details.size, primary: name === primaryRelativePath })
     }
-    return paths.sort()
+    return paths.sort((left, right) => {
+      if (left.primary) return 1
+      if (right.primary) return -1
+      return left.path.localeCompare(right.path)
+    })
   }
 
-  private emit(status: ProcessingStatus): void { for (const listener of this.listeners) listener(status) }
+  private emit(status: ProcessingStatus): void {
+    for (const listener of this.listeners) {
+      try { listener(status) } catch { /* observers cannot affect durable processing */ }
+    }
+  }
 }

@@ -42,7 +42,7 @@ app.whenReady().then(() => {
     new SummaryService(meetings, templateService, new OpenAiSummaryGateway(credentialStore)),
     recordingsDirectory,
   )
-  registerProcessingHandlers(ipcMain, processingService, BrowserWindow)
+  registerProcessingHandlers(ipcMain, processingService)
 
   createMainWindow()
 

@@ -6,6 +6,7 @@ import type { MeetingRepository } from '../db/meetingRepository'
 import { recordingFilePrefix } from '../recording/recordingPaths'
 import type { OpenAiGatewayPort, ProviderTranscription } from './openAiGateway'
 import { safeOpenAiError, toOpenAiError } from './openAiErrors'
+import { PROCESS_OWNER_ID } from './processingOwner'
 
 export interface TranscriptionResult {
   speakers: Speaker[]
@@ -39,10 +40,29 @@ export class TranscriptionService {
     private readonly meetings: MeetingRepository,
     private readonly gateway: OpenAiGatewayPort,
     private readonly recordingsDirectory: string,
+    private readonly ownerId = PROCESS_OWNER_ID,
   ) {}
 
-  async transcribeMeeting(meetingId: string): Promise<TranscriptionResult> {
-    this.meetings.beginTranscription(meetingId)
+  async transcribeMeeting(
+    meetingId: string,
+    orchestration?: { attemptId: string; ownerId: string },
+  ): Promise<TranscriptionResult> {
+    const ownAttempt = orchestration === undefined
+      ? this.meetings.beginProcessingAttempt(meetingId, 'transcription', this.ownerId)
+      : null
+    if (orchestration === undefined) {
+      this.meetings.beginTranscription(meetingId)
+    } else {
+      this.meetings.assertActiveProcessingAttempt(
+        orchestration.attemptId,
+        meetingId,
+        'transcribing',
+        orchestration.ownerId,
+      )
+      if (this.meetings.requireById(meetingId).status !== 'transcribing') {
+        throw new Error('Orchestrated transcription is not in the transcribing state')
+      }
+    }
     try {
       const paths = await this.finalizedPartPaths(meetingId)
       const speakers = new Map<string, Speaker>()
@@ -78,7 +98,9 @@ export class TranscriptionService {
         offsetSeconds += response.durationSeconds
       }
 
-      return this.meetings.completeTranscription(meetingId, [...speakers.values()], segments)
+      const result = this.meetings.completeTranscription(meetingId, [...speakers.values()], segments)
+      if (ownAttempt !== null) this.meetings.finishProcessingAttempt(ownAttempt.id, { succeeded: true })
+      return result
     } catch (error) {
       const typed = toOpenAiError(error)
       this.meetings.failTranscription(meetingId, {
@@ -86,6 +108,12 @@ export class TranscriptionService {
         message: typed.message,
         retryable: typed.retryable,
       })
+      if (ownAttempt !== null) {
+        this.meetings.finishProcessingAttempt(ownAttempt.id, {
+          succeeded: false,
+          error: { code: typed.code, message: typed.message, retryable: typed.retryable },
+        })
+      }
       throw typed
     }
   }

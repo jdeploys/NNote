@@ -72,6 +72,7 @@ export interface ProcessingAttempt {
   finishedAt: string | null
   succeeded: boolean | null
   error: { code: string; message: string; retryable: boolean } | null
+  ownerId: string | null
 }
 
 interface ProcessingAttemptRow {
@@ -82,6 +83,12 @@ interface ProcessingAttemptRow {
   finished_at: string | null
   succeeded: number | null
   sanitized_error: string | null
+  owner_id: string | null
+}
+
+export class ProcessingAttemptConflictError extends Error {
+  readonly code = 'PROCESSING_ALREADY_RUNNING'
+  constructor() { super('Processing is already running for this meeting') }
 }
 
 function toMeeting(row: MeetingRow): Meeting {
@@ -374,14 +381,18 @@ export class MeetingRepository {
     })
   }
 
-  beginProcessingAttempt(meetingId: string, stage: ProcessingStage): ProcessingAttempt {
+  beginProcessingAttempt(meetingId: string, stage: ProcessingStage | 'transcription', ownerId = 'legacy-owner'): ProcessingAttempt {
     this.requireById(meetingId)
+    const active = this.database.prepare(
+      'SELECT id FROM processing_attempts WHERE meeting_id = ? AND finished_at IS NULL',
+    ).get(meetingId)
+    if (active !== undefined) throw new ProcessingAttemptConflictError()
     const id = randomUUID()
     const startedAt = new Date().toISOString()
     this.database.prepare(
-      `INSERT INTO processing_attempts (id, meeting_id, stage, started_at, finished_at, succeeded, sanitized_error)
-       VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
-    ).run(id, meetingId, stage, startedAt)
+      `INSERT INTO processing_attempts (id, meeting_id, stage, started_at, finished_at, succeeded, sanitized_error, owner_id)
+       VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+    ).run(id, meetingId, stage, startedAt, ownerId)
     return this.latestProcessingAttempt(meetingId)!
   }
 
@@ -406,16 +417,54 @@ export class MeetingRepository {
       'SELECT * FROM processing_attempts WHERE meeting_id = ? ORDER BY rowid DESC LIMIT 1',
     ).get(meetingId) as ProcessingAttemptRow | undefined
     if (row === undefined) return null
-    if (!['transcribing', 'summarizing', 'cleanup'].includes(row.stage)) return null
+    const stage = row.stage === 'transcription' ? 'transcribing' : row.stage
+    if (!['transcribing', 'summarizing', 'cleanup'].includes(stage)) return null
     return {
       id: row.id,
       meetingId: row.meeting_id,
-      stage: row.stage as ProcessingStage,
+      stage: stage as ProcessingStage,
       startedAt: row.started_at,
       finishedAt: row.finished_at,
       succeeded: row.succeeded === null ? null : row.succeeded === 1,
       error: row.sanitized_error === null ? null : JSON.parse(row.sanitized_error),
+      ownerId: row.owner_id,
     }
+  }
+
+  assertActiveProcessingAttempt(id: string, meetingId: string, stage: ProcessingStage, ownerId: string): void {
+    const row = this.database.prepare(
+      `SELECT id FROM processing_attempts
+       WHERE id = ? AND meeting_id = ? AND stage = ? AND owner_id = ? AND finished_at IS NULL`,
+    ).get(id, meetingId, stage, ownerId)
+    if (row === undefined) throw new ProcessingAttemptConflictError()
+  }
+
+  reconcileInterruptedProcessing(currentOwnerId: string): void {
+    inTransaction(this.database, () => {
+      const rows = this.database.prepare(
+        `SELECT id, meeting_id, stage FROM processing_attempts
+         WHERE finished_at IS NULL AND (owner_id IS NULL OR owner_id <> ?)`,
+      ).all(currentOwnerId) as Array<{ id: string; meeting_id: string; stage: string }>
+      const error = JSON.stringify({
+        code: 'PROCESSING_INTERRUPTED',
+        message: 'Processing was interrupted. Try again.',
+        retryable: true,
+      })
+      const now = new Date().toISOString()
+      for (const row of rows) {
+        this.database.prepare(
+          'UPDATE processing_attempts SET finished_at = ?, succeeded = 0, sanitized_error = ? WHERE id = ?',
+        ).run(now, error, row.id)
+        const stage = row.stage === 'transcription' ? 'transcribing' : row.stage
+        if (stage === 'transcribing' || stage === 'summarizing') {
+          const meeting = this.requireById(row.meeting_id)
+          if (meeting.status === stage) {
+            this.database.prepare("UPDATE meetings SET status = 'failed', updated_at = ? WHERE id = ?")
+              .run(now, row.meeting_id)
+          }
+        }
+      }
+    })
   }
 
   failProcessing(meetingId: string): Meeting {
@@ -440,6 +489,21 @@ export class MeetingRepository {
          WHERE id = ? AND meeting_id = ? AND stage = 'cleanup' AND finished_at IS NULL`,
       ).run(new Date().toISOString(), attemptId, meetingId)
       if (result.changes !== 1) throw new Error('Cleanup attempt is not active')
+      return this.requireById(meetingId)
+    })
+  }
+
+  updateAudioCleanupProgress(meetingId: string, remainingByteCount: number): Meeting {
+    if (!Number.isSafeInteger(remainingByteCount) || remainingByteCount < 0) {
+      throw new Error('Remaining audio byte count must be a non-negative safe integer')
+    }
+    return inTransaction(this.database, () => {
+      const meeting = this.requireById(meetingId)
+      if (meeting.status !== 'completed' || meeting.audioPath === null) {
+        throw new Error('Audio cleanup progress requires retained completed audio')
+      }
+      this.database.prepare('UPDATE meetings SET audio_byte_count = ?, updated_at = ? WHERE id = ?')
+        .run(remainingByteCount, new Date().toISOString(), meetingId)
       return this.requireById(meetingId)
     })
   }
@@ -479,7 +543,6 @@ export class MeetingRepository {
   beginTranscription(meetingId: string): Meeting {
     return inTransaction(this.database, () => {
       const meeting = this.requireById(meetingId)
-      if (meeting.status === 'transcribing') return meeting
       assertMeetingTransition(meeting.status, 'transcribing')
       this.database
         .prepare("UPDATE meetings SET status = 'transcribing', updated_at = ? WHERE id = ?")
@@ -547,7 +610,7 @@ export class MeetingRepository {
         .run(now, meetingId)
       const active = this.database.prepare(
         `SELECT id FROM processing_attempts
-         WHERE meeting_id = ? AND stage = 'transcribing' AND finished_at IS NULL
+         WHERE meeting_id = ? AND stage IN ('transcribing', 'transcription') AND finished_at IS NULL
          ORDER BY rowid DESC LIMIT 1`,
       ).get(meetingId)
       if (active === undefined) {
