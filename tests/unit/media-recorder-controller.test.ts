@@ -44,6 +44,7 @@ function createHarness() {
   })
   const recording: RecordingApi = {
     start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+    cancelStart: vi.fn(async () => undefined),
     appendChunk: vi.fn(async (input) => {
       calls.push(`append:${input.chunkIndex}`)
       if (input.chunkIndex === 1) await finalAppendGate
@@ -141,7 +142,7 @@ describe('MediaRecorderController', () => {
     let createCount = 0
     const recording = {
       start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
-      appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(),
+      cancelStart: vi.fn(async () => undefined), appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(),
     } satisfies RecordingApi
     const controller = new MediaRecorderController(recording, {
       getUserMedia: vi.fn(async () => streams.shift()!),
@@ -154,10 +155,54 @@ describe('MediaRecorderController', () => {
     })
 
     await expect(controller.start('meeting-1')).rejects.toThrow('codec failed')
+    expect(recording.cancelStart).toHaveBeenCalledWith('meeting-1')
     expect(firstTrack.stop).toHaveBeenCalledOnce()
-    await expect(controller.start('meeting-1')).resolves.toBeUndefined()
+    await expect(controller.start('meeting-2')).resolves.toBeUndefined()
     await controller.discard()
     expect(secondTrack.stop).toHaveBeenCalledOnce()
+  })
+
+  it('leaves pre-Main capture start cleanup to the caller when microphone access fails', async () => {
+    const recording = {
+      start: vi.fn(), cancelStart: vi.fn(), appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(),
+      stop: vi.fn(), discard: vi.fn(),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => { throw new Error('permission denied') }),
+      createRecorder: vi.fn(),
+      now: () => 0,
+    })
+
+    await expect(controller.start('meeting-1')).rejects.toThrow('permission denied')
+    expect(recording.start).not.toHaveBeenCalled()
+    expect(recording.cancelStart).not.toHaveBeenCalled()
+  })
+
+  it('requires explicit discard when pristine start rollback is refused', async () => {
+    const track = new FakeTrack()
+    const recorder = new FakeMediaRecorder()
+    recorder.start.mockImplementationOnce(() => { throw new Error('codec failed') })
+    const recording = {
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+      cancelStart: vi.fn(async () => { throw new Error('session is not pristine') }),
+      appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(),
+      discard: vi.fn(async () => undefined),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [track] }) as unknown as MediaStream),
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => 0,
+    })
+
+    await expect(controller.start('meeting-1')).rejects.toMatchObject({
+      state: 'capture_failed',
+      cause: expect.any(AggregateError),
+    })
+    expect(track.stop).toHaveBeenCalledOnce()
+    expect(recording.discard).not.toHaveBeenCalled()
+
+    await controller.discard()
+    expect(recording.discard).toHaveBeenCalledWith('meeting-1')
   })
 
   it('preserves paused sessions without counting paused wall time as audio duration', async () => {
@@ -167,7 +212,7 @@ describe('MediaRecorderController', () => {
     let clock = 0
     const recording = {
       start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
-      appendChunk: vi.fn(async (input) => ({ totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: input.chunkIndex + 1 })),
+      cancelStart: vi.fn(async () => undefined), appendChunk: vi.fn(async (input) => ({ totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: input.chunkIndex + 1 })),
       pause: vi.fn(async () => undefined),
       resume: vi.fn(async () => ({ totalBytes: 0, durationMs: 10_000, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1 })),
       stop: vi.fn(async () => undefined),
@@ -204,7 +249,7 @@ describe('MediaRecorderController', () => {
         totalBytes: 123, durationMs: 30_000, warn: false, rolledToPartIndex: null,
         activePartIndex: 2, nextChunkIndex: 5,
       })),
-      appendChunk: vi.fn(async () => ({
+      cancelStart: vi.fn(async () => undefined), appendChunk: vi.fn(async () => ({
         totalBytes: 124, durationMs: 40_000, warn: false, rolledToPartIndex: null,
         activePartIndex: 2, nextChunkIndex: 6,
       })),
@@ -232,7 +277,7 @@ describe('MediaRecorderController', () => {
     const recorder = new FakeMediaRecorder()
     const recording = {
       start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
-      appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(async () => undefined),
+      cancelStart: vi.fn(async () => undefined), appendChunk: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(async () => undefined),
     } satisfies RecordingApi
     const getUserMedia = vi.fn(() => streamPromise)
     const controller = new MediaRecorderController(recording, {

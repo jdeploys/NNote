@@ -30,21 +30,4 @@ describe('meeting IPC validation', () => {
     expect(selectedTemplate.get).toHaveBeenCalledWith('default')
     expect(JSON.stringify(result)).not.toContain('private.webm')
   })
-
-  it('removes only an explicitly authorized empty failed-start recording', async () => {
-    const handlers = new Map<string, (...args: unknown[]) => unknown>()
-    const empty = { id: 'empty', status: 'recording', audioPath: null, audioByteCount: 0 }
-    const repository = { listRecent: vi.fn(), create: vi.fn(), requireById: vi.fn(() => empty), listSpeakers: vi.fn(), listTranscript: vi.fn(), listSummarySections: vi.fn(), listActionItems: vi.fn(), renameSpeaker: vi.fn(), discardRecording: vi.fn() }
-    registerMeetingHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, repository as never, templates as never)
-    await handlers.get('meetings:cancel-empty-recording')?.({}, 'empty', { explicitDelete: true })
-    expect(repository.discardRecording).toHaveBeenCalledWith('empty')
-  })
-
-  it('preserves non-empty recording data when failed-start cleanup is requested', async () => {
-    const handlers = new Map<string, (...args: unknown[]) => unknown>()
-    const repository = { listRecent: vi.fn(), create: vi.fn(), requireById: vi.fn(() => ({ id: 'saved', status: 'recording', audioPath: null, audioByteCount: 1 })), listSpeakers: vi.fn(), listTranscript: vi.fn(), listSummarySections: vi.fn(), listActionItems: vi.fn(), renameSpeaker: vi.fn(), discardRecording: vi.fn() }
-    registerMeetingHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, repository as never, templates as never)
-    await expect(handlers.get('meetings:cancel-empty-recording')?.({}, 'saved', { explicitDelete: true })).rejects.toThrow(/empty/i)
-    expect(repository.discardRecording).not.toHaveBeenCalled()
-  })
 })

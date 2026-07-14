@@ -1,4 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
+import { hasTask10VisualBaseline } from './platformSupport'
+
+test.skip(
+  !hasTask10VisualBaseline(process.platform),
+  `Task 10 visual baselines are not available for ${process.platform}; Task 12 adds macOS baselines.`,
+)
 
 async function capture(page: Page, state: string, name: string) {
   await page.goto(`/?state=${state}`)

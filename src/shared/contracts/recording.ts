@@ -20,6 +20,7 @@ export interface RecordingChunk {
 
 export interface RecordingApi {
   start(meetingId: string): Promise<RecordingProgress>
+  cancelStart(meetingId: string): Promise<void>
   appendChunk(chunk: RecordingChunk): Promise<RecordingProgress>
   pause(meetingId: string): Promise<void>
   resume(meetingId: string): Promise<RecordingProgress>

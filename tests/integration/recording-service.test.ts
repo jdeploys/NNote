@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -54,6 +54,61 @@ afterEach(() => {
 })
 
 describe('RecordingService', () => {
+  it('rolls back an active pristine Main session and is idempotent after deletion', async () => {
+    const harness = createHarness('rollback-active')
+    await harness.service.start('rollback-active')
+    expect(existsSync(manifestPath(harness.recordingsDirectory, 'rollback-active'))).toBe(true)
+
+    await harness.service.cancelStart('rollback-active')
+    await expect(harness.service.cancelStart('rollback-active')).resolves.toBeUndefined()
+
+    expect(harness.repository.requireById('rollback-active')).toMatchObject({ status: 'deleted', audioPath: null, audioByteCount: 0 })
+    expect(existsSync(manifestPath(harness.recordingsDirectory, 'rollback-active'))).toBe(false)
+    expect(existsSync(harness.recordingsDirectory) ? readdirSync(harness.recordingsDirectory) : []).toEqual([])
+    await expect(harness.service.resume('rollback-active')).rejects.toThrow(/not been started/i)
+    harness.database.close()
+  })
+
+  it('removes a pristine row when browser capture fails before Main acquired a session', async () => {
+    const harness = createHarness('pre-main')
+
+    await harness.service.cancelStart('pre-main')
+
+    expect(harness.repository.requireById('pre-main').status).toBe('deleted')
+    expect(existsSync(harness.recordingsDirectory) ? readdirSync(harness.recordingsDirectory) : []).toEqual([])
+    harness.database.close()
+  })
+
+  it('refuses automatic start rollback after any byte and preserves normal explicit discard', async () => {
+    const harness = createHarness('has-bytes')
+    await harness.service.start('has-bytes')
+    await harness.service.appendChunk({ meetingId: 'has-bytes', partIndex: 0, chunkIndex: 0, durationMs: 1, bytes: Uint8Array.from([7]) })
+
+    await expect(harness.service.cancelStart('has-bytes')).rejects.toThrow(/pristine/i)
+    expect(harness.repository.requireById('has-bytes')).toMatchObject({ status: 'recording', audioByteCount: 1 })
+    expect(readFileSync(pendingPartPath(harness.recordingsDirectory, 'has-bytes', 0))).toEqual(Buffer.from([7]))
+
+    await harness.service.discard('has-bytes')
+    expect(harness.repository.requireById('has-bytes').status).toBe('deleted')
+    harness.database.close()
+  })
+
+  it('refuses a crafted meeting id and unexpected files without deleting another session', async () => {
+    const harness = createHarness('protected-session')
+    await harness.service.start('protected-session')
+    const manifest = manifestPath(harness.recordingsDirectory, 'protected-session')
+    const unexpected = pendingPartPath(harness.recordingsDirectory, 'protected-session', 9)
+    writeFileSync(unexpected, new Uint8Array())
+
+    await expect(harness.service.cancelStart('../protected-session')).rejects.toThrow(/not found/i)
+    await expect(harness.service.cancelStart('protected-session')).rejects.toThrow(/outside a pristine session/i)
+
+    expect(harness.repository.requireById('protected-session').status).toBe('recording')
+    expect(existsSync(manifest)).toBe(true)
+    expect(existsSync(unexpected)).toBe(true)
+    harness.database.close()
+  })
+
   it('starts a legitimate recoverable manifest while rejecting a finalized one', async () => {
     const resumable = createHarness('resumable')
     resumable.repository.transitionRecordingStatus('resumable', 'recoverable')

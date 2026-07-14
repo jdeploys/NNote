@@ -95,4 +95,24 @@ describe('RecordingPanel', () => {
     expect(controls.discard).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('button', { name: '녹음 시작' })).toBeInTheDocument()
   })
+
+  it('offers explicit discard when start rollback cannot safely remove the recording', async () => {
+    const user = userEvent.setup()
+    const controls = {
+      start: vi.fn(async () => {
+        throw new RecordingTerminalError('capture_failed', 'start rollback refused')
+      }),
+      stop: vi.fn(),
+      discard: vi.fn(async () => undefined),
+    }
+    render(<RecordingPanel controls={controls} onNavigate={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: '녹음 시작' }))
+
+    expect(await screen.findByText('녹음은 중지되었지만 저장 완료를 기다리고 있습니다.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '녹음 시작' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '폐기' }))
+    await user.click(screen.getByRole('button', { name: '녹음 폐기 확인' }))
+    expect(controls.discard).toHaveBeenCalledOnce()
+  })
 })

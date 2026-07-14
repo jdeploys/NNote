@@ -20,6 +20,7 @@ const settings: DesktopApi['settings'] = Object.freeze({
 
 const recording: DesktopApi['recording'] = Object.freeze({
   start: (meetingId: string) => ipcRenderer.invoke('recording:start', meetingId),
+  cancelStart: (meetingId: string) => ipcRenderer.invoke('recording:cancel-start', meetingId),
   appendChunk: (chunk: RecordingChunk) => ipcRenderer.invoke('recording:append-chunk', chunk),
   pause: (meetingId: string) => ipcRenderer.invoke('recording:pause', meetingId),
   resume: (meetingId: string) => ipcRenderer.invoke('recording:resume', meetingId),
@@ -67,9 +68,6 @@ const meetings: DesktopApi['meetings'] = Object.freeze({
   renameSpeaker: (meetingId: string, speakerId: string, displayName: string) => ipcRenderer.invoke(
     'meetings:rename-speaker', meetingId, speakerId, displayName,
   ).then((value) => SpeakerSchema.parse(value)),
-  cancelEmptyRecording: (meetingId: string, options: { explicitDelete: true }) => ipcRenderer.invoke(
-    'meetings:cancel-empty-recording', MeetingIdSchema.parse(meetingId), options,
-  ),
 })
 
 const desktopApi: DesktopApi = Object.freeze({ settings, recording, recovery, templates, processing, meetings })

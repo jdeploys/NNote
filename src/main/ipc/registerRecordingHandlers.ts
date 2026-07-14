@@ -11,7 +11,7 @@ interface RecordingIpcMain {
 
 type RecordingServicePort = Pick<
   RecordingService,
-  'start' | 'appendChunk' | 'pause' | 'resume' | 'stop' | 'discard'
+  'start' | 'cancelStart' | 'appendChunk' | 'pause' | 'resume' | 'stop' | 'discard'
 >
 
 const MeetingIdSchema = z.string().trim().min(1)
@@ -29,6 +29,7 @@ export function registerRecordingHandlers(
   service: RecordingServicePort,
 ): void {
   ipcMain.handle('recording:start', (_event, meetingId) => service.start(MeetingIdSchema.parse(meetingId)))
+  ipcMain.handle('recording:cancel-start', (_event, meetingId) => service.cancelStart(MeetingIdSchema.parse(meetingId)))
   ipcMain.handle('recording:append-chunk', async (_event, value) => {
     const { mimeType: _mimeType, ...chunk } = RecordingChunkSchema.parse(value)
     return service.appendChunk(chunk)

@@ -66,20 +66,20 @@ export class MediaRecorderController {
     if (this.state !== 'idle') throw new Error(`Recording is ${this.state}`)
     this.state = 'starting'
 
-    let stream: MediaStream | null = null
+    let mainSessionStarted = false
     try {
-      stream = await this.dependencies.getUserMedia({
+      this.stream = await this.dependencies.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
       this.appendQueue = Promise.resolve()
       this.appendFailure = null
       const progress = await this.recording.start(meetingId)
-      const recorder = this.dependencies.createRecorder(stream, {
+      mainSessionStarted = true
+      this.meetingId = meetingId
+      const recorder = this.dependencies.createRecorder(this.stream, {
         mimeType: RECORDING_MIME_TYPE,
         audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
       })
-      this.meetingId = meetingId
-      this.stream = stream
       this.recorder = recorder
       this.partIndex = progress.activePartIndex
       this.chunkIndex = progress.nextChunkIndex
@@ -90,11 +90,18 @@ export class MediaRecorderController {
       recorder.start(TIMESLICE_MS)
       this.state = 'recording'
     } catch (error) {
-      this.recorder?.removeEventListener('dataavailable', this.onDataAvailable)
-      if (this.stream === null) {
-        for (const track of stream?.getTracks() ?? []) track.stop()
-      } else {
-        this.cleanupCapture()
+      this.cleanupCapture()
+      if (mainSessionStarted) {
+        try {
+          await this.recording.cancelStart(meetingId)
+        } catch (rollbackError) {
+          this.state = 'capture_failed'
+          throw new RecordingTerminalError(
+            'capture_failed',
+            'Recording start rollback could not be completed; explicit discard is required',
+            { cause: new AggregateError([error, rollbackError], 'Capture start and rollback failed') },
+          )
+        }
       }
       this.clearSession()
       throw error

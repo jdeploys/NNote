@@ -1,5 +1,5 @@
 import { open, readdir, rename, rm, stat, type FileHandle } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { basename, join, relative } from 'node:path'
 import type { MeetingRepository } from '../db/meetingRepository'
 import {
   completedPartPath,
@@ -207,6 +207,45 @@ export class RecordingService {
     )
     await rm(manifestPath(this.recordingsDirectory, meetingId), { force: true })
     await rm(temporaryManifestPath(this.recordingsDirectory, meetingId), { force: true })
+    this.meetings.discardRecording(meetingId)
+    this.sessions.delete(meetingId)
+  }
+
+  async cancelStart(meetingId: string): Promise<void> {
+    const meeting = this.meetings.findById(meetingId)
+    if (meeting === null) throw new Error(`Meeting ${meetingId} was not found`)
+    const manifest = this.sessions.get(meetingId)
+    if (meeting.status === 'deleted' && manifest === undefined) return
+    if (
+      meeting.status !== 'recording' || meeting.audioPath !== null ||
+      meeting.audioByteCount !== 0 || meeting.durationMs !== 0
+    ) {
+      throw new Error('Start cancellation requires a pristine recording meeting')
+    }
+    if (
+      manifest !== undefined &&
+      (manifest.totalBytes !== 0 || manifest.durationMs !== 0 || manifest.parts.length !== 0)
+    ) {
+      throw new Error('Start cancellation requires a pristine Main recording session')
+    }
+
+    const prefix = recordingFilePrefix(meetingId)
+    let entries: string[] = []
+    try {
+      entries = (await readdir(this.recordingsDirectory)).filter((entry) => entry.startsWith(prefix))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    const allowed = new Set([
+      basename(manifestPath(this.recordingsDirectory, meetingId)),
+      basename(temporaryManifestPath(this.recordingsDirectory, meetingId)),
+    ])
+    if (manifest === undefined ? entries.length !== 0 : entries.some((entry) => !allowed.has(entry))) {
+      throw new Error('Start cancellation found recording files outside a pristine session')
+    }
+
+    await this.closeHandle(meetingId)
+    await Promise.all(entries.map((entry) => rm(join(this.recordingsDirectory, entry), { force: true })))
     this.meetings.discardRecording(meetingId)
     this.sessions.delete(meetingId)
   }

@@ -45,5 +45,4 @@ export interface MeetingsApi {
   get(meetingId: string): Promise<MeetingDocument>
   createRecording(input: CreateRecordingMeetingInput): Promise<PublicMeeting>
   renameSpeaker(meetingId: string, speakerId: string, displayName: string): Promise<z.infer<typeof SpeakerSchema>>
-  cancelEmptyRecording(meetingId: string, options: { explicitDelete: true }): Promise<void>
 }

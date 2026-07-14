@@ -4,7 +4,10 @@ import type { MeetingDocument, PublicMeeting } from '../../shared/contracts/meet
 import type { RecoveryItem } from '../../shared/contracts/recovery'
 import { Dashboard } from './features/meetings/Dashboard'
 import { MeetingDetail } from './features/meetings/MeetingDetail'
-import { MediaRecorderController } from './features/recording/mediaRecorderController'
+import {
+  MediaRecorderController,
+  RecordingTerminalError,
+} from './features/recording/mediaRecorderController'
 import { RecoveryDialog } from './features/recording/RecoveryDialog'
 import { ApiKeySettings } from './features/settings/ApiKeySettings'
 import { TemplateEditor } from './features/templates/TemplateEditor'
@@ -63,13 +66,17 @@ export function App({
     start: async () => {
       const created = await desktopApi.meetings.createRecording({
         title: `새 회의 ${new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date())}`,
-        audioPolicy: 'delete_after_processing', selectedTemplateId: null,
+        audioPolicy: 'delete_after_processing', selectedTemplateId: 'default',
       })
       try {
         await controller.start(created.id)
       } catch (startError) {
+        if (startError instanceof RecordingTerminalError && startError.state === 'capture_failed') {
+          await refreshMeetings()
+          throw startError
+        }
         try {
-          await desktopApi.meetings.cancelEmptyRecording(created.id, { explicitDelete: true })
+          await desktopApi.recording.cancelStart(created.id)
         } catch (cleanupError) {
           throw new AggregateError([startError, cleanupError], '녹음 시작 실패 후 빈 기록을 정리하지 못했습니다.')
         } finally {
@@ -83,8 +90,8 @@ export function App({
     discard: async () => { await controller.discard(); await refreshMeetings() },
   }), [controller, desktopApi, refreshMeetings])
 
-  function navigate(destination: 'all' | 'templates' | 'settings') {
-    if (destination !== 'all') returnFocusKey.current = `nav-${destination}`
+  function navigate(destination: 'all' | 'templates' | 'settings', originFocusKey?: string) {
+    if (destination !== 'all') returnFocusKey.current = originFocusKey ?? `nav-${destination}`
     setScreen(destination)
   }
 

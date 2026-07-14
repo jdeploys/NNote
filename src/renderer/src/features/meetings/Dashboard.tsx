@@ -5,7 +5,7 @@ interface DashboardProps {
   meetings: readonly PublicMeeting[]
   recordingControls: RecordingPanelControls
   onOpenMeeting(meetingId: string): void
-  onNavigate(destination: 'all' | 'templates' | 'settings'): void
+  onNavigate(destination: 'all' | 'templates' | 'settings', originFocusKey?: string): void
 }
 
 function formatDate(value: string): string {
@@ -34,7 +34,11 @@ export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNaviga
         <p className="eyebrow">NEW MEETING</p>
         <h1 id="new-meeting-heading">새 회의</h1>
         <p className="muted">노트북 마이크로 녹음하고 이 기기에 안전하게 저장합니다.</p>
-        <RecordingPanel controls={recordingControls} onNavigate={() => onNavigate('settings')} />
+        <RecordingPanel
+          controls={recordingControls}
+          settingsFocusKey="recording-settings"
+          onNavigate={() => onNavigate('settings', 'recording-settings')}
+        />
       </section>
       <section className="recent-card" aria-labelledby="recent-heading">
         <div className="section-heading">

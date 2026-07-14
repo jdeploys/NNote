@@ -20,12 +20,11 @@ interface MeetingIpcMain {
 
 type MeetingRepositoryPort = Pick<MeetingRepository,
   'listRecent' | 'create' | 'requireById' | 'listSpeakers' | 'listTranscript' |
-  'listSummarySections' | 'listActionItems' | 'renameSpeaker' | 'discardRecording'>
+  'listSummarySections' | 'listActionItems' | 'renameSpeaker'>
 type TemplateServicePort = Pick<TemplateService, 'get'>
 
 const SpeakerIdSchema = z.string().trim().min(1).max(200)
 const SpeakerNameSchema = z.string().trim().min(1).max(100)
-const ExplicitDeleteSchema = z.object({ explicitDelete: z.literal(true) }).strict()
 
 function toPublicMeeting(meeting: Meeting): PublicMeeting {
   const { audioPath: _privatePath, ...publicFields } = meeting
@@ -70,13 +69,4 @@ export function registerMeetingHandlers(ipcMain: MeetingIpcMain, repository: Mee
       SpeakerNameSchema.parse(rawDisplayName),
     ),
   )
-  ipcMain.handle('meetings:cancel-empty-recording', async (_event, rawMeetingId, rawOptions) => {
-    const meetingId = MeetingIdSchema.parse(rawMeetingId)
-    ExplicitDeleteSchema.parse(rawOptions)
-    const meeting = repository.requireById(meetingId)
-    if (meeting.status !== 'recording' || meeting.audioPath !== null || meeting.audioByteCount !== 0) {
-      throw new Error('Only an empty failed-start recording can be removed')
-    }
-    repository.discardRecording(meetingId)
-  })
 }

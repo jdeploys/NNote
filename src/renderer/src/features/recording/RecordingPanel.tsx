@@ -13,11 +13,12 @@ export interface RecordingPanelControls {
 interface RecordingPanelProps {
   controls: RecordingPanelControls
   onNavigate(destination: 'settings'): void
+  settingsFocusKey?: string
 }
 
 type PanelPhase = 'idle' | 'recording' | 'stop_pending' | 'discard_pending'
 
-export function RecordingPanel({ controls, onNavigate }: RecordingPanelProps) {
+export function RecordingPanel({ controls, onNavigate, settingsFocusKey }: RecordingPanelProps) {
   const [phase, setPhase] = useState<PanelPhase>('idle')
   const [terminalFailure, setTerminalFailure] = useState<RecordingTerminalFailure | null>(null)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
@@ -31,6 +32,10 @@ export function RecordingPanel({ controls, onNavigate }: RecordingPanelProps) {
       await controls.start()
       setPhase('recording')
     } catch (cause) {
+      if (cause instanceof RecordingTerminalError && cause.state === 'capture_failed') {
+        setTerminalFailure('capture_failed')
+        setPhase('stop_pending')
+      }
       setError(cause instanceof Error ? cause.message : '녹음을 시작하지 못했습니다.')
     } finally {
       setBusy(false)
@@ -112,7 +117,7 @@ export function RecordingPanel({ controls, onNavigate }: RecordingPanelProps) {
           </button>
         </>
       )}
-      <button disabled={busy} onClick={() => onNavigate('settings')}>
+      <button data-focus-key={settingsFocusKey} disabled={busy} onClick={() => onNavigate('settings')}>
         설정으로 이동
       </button>
       {error !== null && <p role="alert">{error}</p>}
