@@ -1,0 +1,52 @@
+{
+  "name": "nnote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Secure desktop meeting recorder",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "lint": "eslint .",
+    "package:win": "electron-builder --win",
+    "package:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.nnote.app",
+    "productName": "Nnote",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ]
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^1.3.0",
+    "better-sqlite3": "^12.11.1",
+    "fflate": "^0.8.3",
+    "openai": "^6.46.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "^10.7.0",
+    "jsdom": "^29.1.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
