@@ -64,3 +64,5 @@ node scripts/verify-package.mjs dist/mac-*/Nnote.app
 ## 릴리스 검증 상태
 
 자동 및 수동 확인의 정확한 범위는 [릴리스 인수 매트릭스](docs/release/acceptance-matrix.md)에 기록합니다. Windows 로컬 결과를 macOS 결과로 간주하지 않으며, 2시간 실기기·실제 마이크·실제 OpenAI 네트워크 검증은 별도 수동 항목입니다.
+
+macOS 시각 CI는 기준선이 없거나 픽셀이 다르면 성공으로 건너뛰지 않습니다. 실패한 작업의 `macos-visual-candidates-and-diffs` artifact에서 darwin 후보 원본과 실제·예상·diff 이미지를 내려받아 검토하고, 승인한 `tests/visual/snapshots/darwin` PNG만 커밋한 뒤 CI를 다시 실행해야 합니다. `npm run test:visual:update`는 후보 생성 명령이며 그 결과 자체가 승인이라는 뜻은 아닙니다.

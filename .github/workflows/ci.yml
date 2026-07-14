@@ -51,7 +51,6 @@ jobs:
 
   mac-visual-baseline:
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,12 +59,30 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install chromium
-      - run: npm run test:visual
+      - name: Compare tracked macOS visual baselines
+        id: visual-compare
+        continue-on-error: true
+        run: npm run test:visual
+      - name: Preserve comparison diffs
+        if: steps.visual-compare.outcome == 'failure'
+        run: |
+          if [ -d test-results ]; then cp -R test-results visual-comparison-results; fi
+      - name: Generate unreviewed macOS candidate baselines
+        if: steps.visual-compare.outcome == 'failure'
+        continue-on-error: true
+        run: npm run test:visual:update
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
-          name: macos-visual-missing-or-diff
+          name: macos-visual-candidates-and-diffs
           path: |
+            tests/visual/snapshots/darwin/**
+            visual-comparison-results/**
             test-results/**
             playwright-report/**
           if-no-files-found: ignore
+      - name: Reject missing, changed, or unreviewed macOS pixels
+        if: steps.visual-compare.outcome == 'failure'
+        run: |
+          echo "macOS visual comparison failed. Review the uploaded candidate and diff artifacts, commit approved darwin baselines, and rerun CI."
+          exit 1

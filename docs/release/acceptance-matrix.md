@@ -15,7 +15,7 @@
 | Windows 설치 프로그램 | Windows 10.0.26200, 로컬 | PASS | `dist/Nnote Setup 0.1.0.exe` 생성; Authenticode `NotSigned` |
 | 릴리스 내용 allowlist | Windows 10.0.26200, 로컬 | PASS | ASAR에 `out`, package metadata, SQLite/Keyring 최소 native runtime만 존재; source map/recording/db/archive/env/app tests/src 없음 |
 | macOS 패키지·런타임 | macOS CI/실기기 | PENDING | Windows 결과로 대체하지 않음 |
-| macOS 시각 기준선 | macOS CI | PENDING | 최초 CI의 missing/diff artifact를 검토 후 기준선 PR에서만 추가 |
+| macOS 시각 기준선 | macOS CI | PENDING | 비교 실패 시 CI도 실패하며, 생성된 darwin 후보를 검토·커밋하기 전에는 통과하지 않음 |
 
 ## 수동 실기기 검증
 
@@ -33,10 +33,13 @@
 
 ## macOS 시각 기준선 절차
 
-1. `mac-visual-baseline` CI 작업을 macOS에서 실행한다.
-2. 기준선이 없거나 차이가 있으면 업로드된 `macos-visual-missing-or-diff` artifact를 받는다.
-3. macOS 렌더링을 사람이 검토한다. Windows PNG를 복사하거나 이름만 바꾸지 않는다.
-4. 승인한 macOS PNG를 별도 기준선 PR에 추가하고 CI를 다시 실행해 비교가 통과하는지 확인한다.
+1. `mac-visual-baseline` CI 작업은 먼저 추적 중인 `tests/visual/snapshots/darwin` 기준선과 실제 macOS 픽셀을 비교한다.
+2. 기준선이 없거나 픽셀이 다르면 작업은 `macos-visual-candidates-and-diffs` artifact를 업로드한 뒤 명시적으로 실패한다. 성공으로 건너뛰지 않는다.
+3. artifact에서 `tests/visual/snapshots/darwin` 후보 원본과 `visual-comparison-results`/`test-results`의 실제·예상·diff 이미지를 모두 내려받아 사람이 확인한다.
+4. Windows PNG를 복사하거나 이름만 바꾸지 말고, 승인한 darwin 후보 PNG만 별도 기준선 PR에 커밋한다.
+5. CI를 다시 실행한다. 추적된 darwin 기준선과 새 macOS 렌더링 비교가 통과해야 작업이 성공한다.
+
+로컬 macOS에서 후보를 다시 만들 때만 `npm run test:visual:update`를 사용한다. 이 명령의 출력은 승인된 기준선이 아니며 검토 없이 커밋하지 않는다.
 
 ## 서명 상태
 

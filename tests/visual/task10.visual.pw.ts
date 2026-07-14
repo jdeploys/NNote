@@ -3,7 +3,7 @@ import { hasTask10VisualBaseline } from './platformSupport'
 
 test.skip(
   !hasTask10VisualBaseline(process.platform),
-  `Task 10 visual baselines are not available for ${process.platform}; Task 12 adds macOS baselines.`,
+  `Task 10 visual comparisons support Windows and macOS, not ${process.platform}.`,
 )
 
 async function capture(page: Page, state: string, name: string) {
