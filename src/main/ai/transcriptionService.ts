@@ -14,7 +14,7 @@ export interface TranscriptionResult {
 
 function validateProviderTiming(response: NormalizedTranscription): void {
   if (!Number.isFinite(response.durationSeconds) || response.durationSeconds < 0) {
-    throw safeProviderError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription response.', false)
+    throw safeProviderError('TRANSCRIPTION_MALFORMED_RESPONSE', 'The transcription provider returned an invalid response.', false)
   }
   let previousStart = 0
   for (const segment of response.segments) {
@@ -28,7 +28,7 @@ function validateProviderTiming(response: NormalizedTranscription): void {
       typeof segment.text !== 'string' ||
       (segment.speakerLabel !== null && (typeof segment.speakerLabel !== 'string' || segment.speakerLabel.length === 0))
     ) {
-      throw safeProviderError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription response.', false)
+      throw safeProviderError('TRANSCRIPTION_MALFORMED_RESPONSE', 'The transcription provider returned an invalid response.', false)
     }
     previousStart = segment.startSeconds
   }
@@ -142,19 +142,19 @@ export class TranscriptionService {
       : meeting.audioPath === null ? [] : [{ name: meeting.audioPath, index: 0 }]
     if (parts.length === 0 || parts.some((part, index) => part.index !== index || basename(part.name) !== part.name
       || (part.durationSeconds !== undefined && (!Number.isFinite(part.durationSeconds) || part.durationSeconds < 0)))) {
-      throw safeProviderError('OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.', false)
+      throw safeProviderError('TRANSCRIPTION_INVALID_AUDIO', 'The transcription provider could not process this audio file.', false)
     }
     return Promise.all(
       parts.map(async ({ name, ...part }) => {
         const candidate = join(this.recordingsDirectory, name)
         const details = await lstat(candidate)
         if (details.isSymbolicLink() || !details.isFile()) {
-          throw safeProviderError('OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.', false)
+          throw safeProviderError('TRANSCRIPTION_INVALID_AUDIO', 'The transcription provider could not process this audio file.', false)
         }
         const resolved = await realpath(candidate)
         const fromRoot = relative(resolvedRoot, resolved)
         if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
-          throw safeProviderError('OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.', false)
+          throw safeProviderError('TRANSCRIPTION_INVALID_AUDIO', 'The transcription provider could not process this audio file.', false)
         }
         return { filePath: resolved, ...part }
       }),

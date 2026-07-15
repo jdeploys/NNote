@@ -41,7 +41,7 @@ export function parseWhisperOutput(json: string, durationSeconds: number): Norma
     || output.transcription.length > MAX_SEGMENTS
   ) return invalid()
 
-  let previousStart = 0
+  let previousEnd = 0
   const segments = output.transcription.map((raw) => {
     if (
       typeof raw !== 'object' || raw === null
@@ -56,10 +56,10 @@ export function parseWhisperOutput(json: string, durationSeconds: number): Norma
     if (
       !Number.isSafeInteger(from) || !Number.isSafeInteger(to)
       || from < 0 || to < from || from !== timestampFrom || to !== timestampTo
-      || from < previousStart || to / 1_000 > durationSeconds + 0.001
+      || from < previousEnd || to / 1_000 > durationSeconds + 0.001
       || text.length === 0
     ) return invalid()
-    previousStart = from
+    previousEnd = to
     return { speakerLabel: null, startSeconds: from / 1_000, endSeconds: to / 1_000, text }
   })
   return { durationSeconds, segments }

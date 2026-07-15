@@ -47,6 +47,7 @@ const whisperJson = (segments: unknown[]) => JSON.stringify({
 async function harness(options: {
   durationSeconds?: number
   output?: string
+  wav?: Buffer
   processResults?: OwnedProcessResult[]
   cleanup?: (path: string) => Promise<void>
 } = {}) {
@@ -69,7 +70,7 @@ async function harness(options: {
     calls.push(request)
     const queued = results.shift()
     if (queued !== undefined) return queued
-    if (calls.length === 1) await writeFile(request.args.at(-1)!, pcmWav(options.durationSeconds ?? 4))
+    if (calls.length === 1) await writeFile(request.args.at(-1)!, options.wav ?? pcmWav(options.durationSeconds ?? 4))
     else await writeFile(`${request.args.at(-1)!}.json`, options.output ?? whisperJson([
       { timestamps: { from: '00:00:00,000', to: '00:00:01,200' }, offsets: { from: 0, to: 1200 }, text: '  안녕하세요  ' },
     ]))
@@ -134,9 +135,9 @@ describe('LocalWhisperTranscriptionAdapter', () => {
   it.each([
     ['missing output', undefined],
     ['malformed JSON', '{bad'],
-    ['bad timestamp', whisperJson([{ offsets: { from: 20, to: 10 }, text: 'bad' }])],
-    ['empty text', whisperJson([{ offsets: { from: 0, to: 10 }, text: '   ' }])],
-    ['segment beyond duration', whisperJson([{ offsets: { from: 0, to: 5000 }, text: 'too long' }])],
+    ['bad timestamp', whisperJson([{ timestamps: { from: '00:00:00,020', to: '00:00:00,010' }, offsets: { from: 20, to: 10 }, text: 'bad' }])],
+    ['empty text', whisperJson([{ timestamps: { from: '00:00:00,000', to: '00:00:00,010' }, offsets: { from: 0, to: 10 }, text: '   ' }])],
+    ['segment beyond duration', whisperJson([{ timestamps: { from: '00:00:00,000', to: '00:00:05,000' }, offsets: { from: 0, to: 5000 }, text: 'too long' }])],
   ])('rejects %s with no output detail leakage', async (_label, output) => {
     const h = await harness({ output })
     if (output === undefined) h.run.mockImplementationOnce(async (request) => {
@@ -147,6 +148,7 @@ describe('LocalWhisperTranscriptionAdapter', () => {
     const failure = await h.adapter.transcribe({ filePath: h.input, recordingDurationSeconds: 4 }).catch((error: unknown) => error)
     expect(failure).toMatchObject({ code: 'LOCAL_WHISPER_INVALID_OUTPUT' })
     expect(String(failure)).not.toContain('too long')
+    await expect(readFile(h.calls[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects oversized output before parsing', async () => {
@@ -154,6 +156,7 @@ describe('LocalWhisperTranscriptionAdapter', () => {
     await expect(h.adapter.transcribe({ filePath: h.input, recordingDurationSeconds: 4 })).rejects.toMatchObject({
       code: 'LOCAL_WHISPER_OUTPUT_TOO_LARGE',
     })
+    await expect(readFile(h.calls[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects escaped and symlink inputs before spawning', async (context) => {
@@ -186,6 +189,57 @@ describe('LocalWhisperTranscriptionAdapter', () => {
       code: 'LOCAL_WHISPER_FILESYSTEM_ERROR',
     })
     expect(h.run).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['truncated header', Buffer.from('RIFF')],
+    ['declared data beyond file', (() => { const wav = pcmWav(1); wav.writeUInt32LE(wav.length, 40); return wav })()],
+    ['wrong PCM format', (() => { const wav = pcmWav(1); wav.writeUInt16LE(3, 20); return wav })()],
+    ['wrong channels', (() => { const wav = pcmWav(1); wav.writeUInt16LE(2, 22); return wav })()],
+    ['wrong sample rate', (() => { const wav = pcmWav(1); wav.writeUInt32LE(8_000, 24); return wav })()],
+    ['wrong byte rate', (() => { const wav = pcmWav(1); wav.writeUInt32LE(16_000, 28); return wav })()],
+    ['wrong block alignment', (() => { const wav = pcmWav(1); wav.writeUInt16LE(4, 32); return wav })()],
+    ['wrong bits', (() => { const wav = pcmWav(1); wav.writeUInt16LE(8, 34); return wav })()],
+    ['unaligned data', (() => { const wav = pcmWav(1); wav.writeUInt32LE(31_999, 40); return wav })()],
+  ])('rejects malformed PCM: %s', async (_label, wav) => {
+    const h = await harness({ wav })
+    await expect(h.adapter.transcribe({ filePath: h.input })).rejects.toMatchObject({ code: 'LOCAL_WHISPER_INVALID_OUTPUT' })
+    expect(h.calls).toHaveLength(1)
+    await expect(readFile(h.calls[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects symlinked generated WAV and JSON without reading or changing outside targets', async (context) => {
+    const wavHarness = await harness()
+    const outsideWav = join(wavHarness.parent, 'outside.wav')
+    await writeFile(outsideWav, pcmWav(4))
+    wavHarness.run.mockImplementationOnce(async (request) => {
+      wavHarness.calls.push(request)
+      try { await symlink(outsideWav, request.args.at(-1)!, 'file') } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') { context.skip(); return { status: 'success', exitCode: 0, stdout: '', stderr: '' } }
+        throw error
+      }
+      return { status: 'success', exitCode: 0, stdout: '', stderr: '' }
+    })
+    await expect(wavHarness.adapter.transcribe({ filePath: wavHarness.input })).rejects.toMatchObject({ code: 'LOCAL_WHISPER_INVALID_OUTPUT' })
+    await expect(readFile(outsideWav)).resolves.toEqual(pcmWav(4))
+
+    const jsonHarness = await harness()
+    const outsideJson = join(jsonHarness.parent, 'outside.json')
+    await writeFile(outsideJson, 'outside transcript canary')
+    jsonHarness.run.mockImplementationOnce(async (request) => {
+      jsonHarness.calls.push(request)
+      await writeFile(request.args.at(-1)!, pcmWav(4))
+      return { status: 'success', exitCode: 0, stdout: '', stderr: '' }
+    }).mockImplementationOnce(async (request) => {
+      jsonHarness.calls.push(request)
+      await symlink(outsideJson, `${request.args.at(-1)!}.json`, 'file')
+      return { status: 'success', exitCode: 0, stdout: '', stderr: '' }
+    })
+    const failure = await jsonHarness.adapter.transcribe({ filePath: jsonHarness.input }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: 'LOCAL_WHISPER_INVALID_OUTPUT' })
+    expect(String(failure)).not.toContain('outside transcript canary')
+    await expect(readFile(outsideJson, 'utf8')).resolves.toBe('outside transcript canary')
+    await expect(readFile(jsonHarness.calls[0]!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('reports runtime/model availability safely and exposes only local capabilities', async () => {
@@ -265,6 +319,10 @@ describe('pinned whisper.cpp output parser', () => {
     expect(() => parseWhisperOutput(JSON.stringify({
       result: { language: 'en' }, transcription: [],
     }), 2)).toThrow()
+    expect(() => parseWhisperOutput(whisperJson([
+      { timestamps: { from: '00:00:00,000', to: '00:00:01,000' }, offsets: { from: 0, to: 1000 }, text: 'first' },
+      { timestamps: { from: '00:00:00,500', to: '00:00:00,600' }, offsets: { from: 500, to: 600 }, text: 'regressed' },
+    ]), 2)).toThrow()
   })
 })
 
@@ -295,5 +353,24 @@ describe('local runtime path resolver', () => {
     const resources = await root('nnote-runtime-dev-')
     await expect(resolveLocalRuntimePaths({ isPackaged: false, resourcesPath: resources, platform: 'win32', arch: 'x64' }))
       .rejects.toMatchObject({ code: 'LOCAL_WHISPER_RUNTIME_UNAVAILABLE' })
+  })
+
+  it('accepts an explicit owned development override and both packaged macOS targets', async () => {
+    const development = await root('nnote-runtime-explicit-')
+    await writeFile(join(development, 'ffmpeg.exe'), 'ffmpeg')
+    await writeFile(join(development, 'whisper-cli.exe'), 'whisper')
+    await expect(resolveLocalRuntimePaths({
+      isPackaged: false, resourcesPath: 'unused', platform: 'win32', arch: 'x64', developmentRuntimeDirectory: development,
+    })).resolves.toEqual({ ffmpegPath: resolve(development, 'ffmpeg.exe'), whisperPath: resolve(development, 'whisper-cli.exe') })
+
+    for (const arch of ['x64', 'arm64']) {
+      const resources = await root(`nnote-runtime-darwin-${arch}-`)
+      const owned = join(resources, 'local-runtime', `darwin-${arch}`)
+      await mkdir(owned, { recursive: true })
+      await writeFile(join(owned, 'ffmpeg'), 'ffmpeg')
+      await writeFile(join(owned, 'whisper-cli'), 'whisper')
+      await expect(resolveLocalRuntimePaths({ isPackaged: true, resourcesPath: resources, platform: 'darwin', arch }))
+        .resolves.toEqual({ ffmpegPath: resolve(owned, 'ffmpeg'), whisperPath: resolve(owned, 'whisper-cli') })
+    }
   })
 })

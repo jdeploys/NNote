@@ -34,5 +34,5 @@ export function toProviderError(error: unknown): ProviderError {
       return safeProviderError(value.code, value.message, value.retryable)
     }
   }
-  return safeProviderError('OPENAI_UNKNOWN', 'OpenAI transcription failed.', false)
+  return safeProviderError('TRANSCRIPTION_PROVIDER_UNKNOWN', 'Transcription provider failed.', false)
 }

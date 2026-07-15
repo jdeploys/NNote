@@ -11,7 +11,8 @@ import { OpenAiGateway, type OpenAiTranscriptionClient } from '../../src/main/ai
 import { OpenAiError, toOpenAiError } from '../../src/main/ai/openAiErrors'
 import { TranscriptionService } from '../../src/main/ai/transcriptionService'
 import { OpenAiTranscriptionAdapter } from '../../src/main/ai/providers/openAiTranscriptionAdapter'
-import { safeProviderError } from '../../src/main/ai/providers/providerErrors'
+import { ProviderRegistry } from '../../src/main/ai/providers/providerRegistry'
+import { safeProviderError, toProviderError } from '../../src/main/ai/providers/providerErrors'
 import { completedPartPath } from '../../src/main/recording/recordingPaths'
 import type { Meeting } from '../../src/shared/contracts/meeting'
 
@@ -65,6 +66,29 @@ describe('OpenAiGateway', () => {
       responseFormat: 'diarized_json',
       chunkingStrategy: 'auto',
     })
+  })
+
+  it('selecting OpenAI from the Registry never invokes a packaged process runner', async () => {
+    const runOwnedProcess = vi.fn()
+    const gateway = { transcribe: vi.fn(async () => ({ durationSeconds: 1, segments: [] })) }
+    const openAi = new OpenAiTranscriptionAdapter(gateway)
+    const registry = new ProviderRegistry([openAi], [])
+
+    await registry.transcription('openai').transcribe({ filePath: 'meeting.webm', recordingDurationSeconds: 1 })
+
+    expect(gateway.transcribe).toHaveBeenCalledOnce()
+    expect(runOwnedProcess).not.toHaveBeenCalled()
+  })
+
+  it('maps a raw OpenAI gateway failure through the adapter without leaking its canary', async () => {
+    const adapter = new OpenAiTranscriptionAdapter({
+      transcribe: vi.fn(async () => { throw Object.assign(new Error('adapter canary secret'), { status: 401 }) }),
+    })
+
+    const failure = await adapter.transcribe({ filePath: 'meeting.webm' }).catch((error: unknown) => error)
+
+    expect(failure).toMatchObject({ code: 'OPENAI_UNAUTHORIZED', message: 'OpenAI rejected the API key.', retryable: false })
+    expect(String(failure)).not.toContain('adapter canary secret')
   })
 
   it('uses the exact SDK request shape and retrieves the credential for every call', async () => {
@@ -227,7 +251,7 @@ describe('TranscriptionService', () => {
     const begin = vi.spyOn(h.meetings, 'beginTranscription').mockImplementationOnce(() => { throw new Error('forced transition failure') })
     const gateway = { transcribe: vi.fn(async () => ({ durationSeconds: 1, segments: [] })) }
     const service = new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory)
-    await expect(service.transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_UNKNOWN' })
+    await expect(service.transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'TRANSCRIPTION_PROVIDER_UNKNOWN' })
     expect(gateway.transcribe).not.toHaveBeenCalled()
     expect(h.meetings.latestProcessingAttempt('meeting-1')).toMatchObject({ succeeded: false, finishedAt: expect.any(String) })
     begin.mockRestore()
@@ -293,7 +317,7 @@ describe('TranscriptionService', () => {
       },
     }
 
-    await expect(new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_MALFORMED_RESPONSE' })
+    await expect(new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'TRANSCRIPTION_MALFORMED_RESPONSE' })
 
     expect(h.meetings.listTranscript('meeting-1')).toEqual([{ id: 'old:0', meetingId: 'meeting-1', speakerId: 'old', startMs: 0, endMs: 10, text: 'Keep me' }])
     expect(h.meetings.requireById('meeting-1').status).toBe('failed')
@@ -344,11 +368,11 @@ describe('TranscriptionService', () => {
     const h = harness()
     rmSync(h.recordingsDirectory, { recursive: true })
 
-    await expect(new TranscriptionService(h.meetings, () => ({ async transcribe() { throw new Error('unreachable') } }), h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_UNKNOWN' })
+    await expect(new TranscriptionService(h.meetings, () => ({ async transcribe() { throw new Error('unreachable') } }), h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'TRANSCRIPTION_PROVIDER_UNKNOWN' })
 
     const { sanitized_error: sanitizedError } = h.database.prepare('SELECT sanitized_error FROM processing_attempts WHERE meeting_id = ?').get('meeting-1') as { sanitized_error: string }
     expect(sanitizedError).not.toContain(h.recordingsDirectory)
-    expect(JSON.parse(sanitizedError)).toMatchObject({ message: 'OpenAI transcription failed.' })
+    expect(JSON.parse(sanitizedError)).toMatchObject({ message: 'Transcription provider failed.' })
     h.database.close()
   })
 
@@ -424,10 +448,18 @@ describe('TranscriptionService', () => {
     const gateway = { transcribe: vi.fn() }
 
     await expect(new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({
-      code: 'OPENAI_INVALID_AUDIO',
+      code: 'TRANSCRIPTION_INVALID_AUDIO',
     })
     expect(gateway.transcribe).not.toHaveBeenCalled()
     h.database.close()
+  })
+
+  it('uses a provider-neutral fallback while preserving concrete OpenAI classifications', () => {
+    expect(toProviderError(new Error('local provider canary'))).toMatchObject({
+      code: 'TRANSCRIPTION_PROVIDER_UNKNOWN', message: 'Transcription provider failed.', retryable: false,
+    })
+    expect(toProviderError(safeProviderError('OPENAI_UNAUTHORIZED', 'OpenAI rejected the API key.', false)))
+      .toMatchObject({ code: 'OPENAI_UNAUTHORIZED', message: 'OpenAI rejected the API key.' })
   })
 
   it('stores null-speaker segments without creating a speaker and uses a deterministic segment ID', async () => {
