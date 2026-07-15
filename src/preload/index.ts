@@ -13,11 +13,21 @@ import {
 } from '../shared/contracts/meetingsApi'
 import { SpeakerSchema } from '../shared/contracts/meeting'
 import { ArchiveOperationResultSchema } from '../shared/contracts/archive'
+import {
+  ProcessingProviderSettingsSchema,
+  type ProcessingProviderSettings,
+} from '../shared/contracts/settings'
 
 const settings: DesktopApi['settings'] = Object.freeze({
   saveApiKey: (value: string) => ipcRenderer.invoke('settings:save-api-key', value),
   getApiKeyStatus: () => ipcRenderer.invoke('settings:get-api-key-status'),
   deleteApiKey: () => ipcRenderer.invoke('settings:delete-api-key'),
+  getProcessingProviders: () => ipcRenderer.invoke('settings:get-processing-providers')
+    .then((value) => ProcessingProviderSettingsSchema.parse(value)),
+  updateProcessingProviders: (input: ProcessingProviderSettings) => ipcRenderer.invoke(
+    'settings:update-processing-providers',
+    ProcessingProviderSettingsSchema.parse(input),
+  ).then((value) => ProcessingProviderSettingsSchema.parse(value)),
 })
 
 const recording: DesktopApi['recording'] = Object.freeze({

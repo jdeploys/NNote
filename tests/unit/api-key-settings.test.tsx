@@ -7,6 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopApi } from '../../src/shared/contracts/desktopApi'
 import { ApiKeySettings } from '../../src/renderer/src/features/settings/ApiKeySettings'
 
+const defaultProcessingProviderSettings = {
+  transcriptionProvider: 'openai' as const,
+  summaryProvider: 'openai' as const,
+  localWhisperModel: 'base' as const,
+}
+
+const processingSettingsApi = () => ({
+  getProcessingProviders: vi.fn().mockResolvedValue(defaultProcessingProviderSettings),
+  updateProcessingProviders: vi.fn(async (input) => input),
+})
+
 describe('API key settings', () => {
   afterEach(cleanup)
 
@@ -31,8 +42,47 @@ describe('API key settings', () => {
     expect(Object.keys(exposedApi!.settings)).not.toContain('getApiKey')
   })
 
+  it('validates processing provider settings across the preload boundary', async () => {
+    let exposedApi: DesktopApi | undefined
+    const invoke = vi.fn(async (channel: string): Promise<unknown> => {
+      if (channel === 'settings:get-processing-providers') {
+        return { transcriptionProvider: 'openai', summaryProvider: 'openai', localWhisperModel: 'base' }
+      }
+      return { transcriptionProvider: 'local_whisper', summaryProvider: 'codex_cli', localWhisperModel: 'small' }
+    })
+    vi.doMock('electron', () => ({
+      contextBridge: {
+        exposeInMainWorld: (_name: string, api: DesktopApi) => {
+          exposedApi = api
+        },
+      },
+      ipcRenderer: { invoke },
+    }))
+
+    await import('../../src/preload/index')
+
+    await expect(exposedApi!.settings.getProcessingProviders()).resolves.toEqual({
+      transcriptionProvider: 'openai', summaryProvider: 'openai', localWhisperModel: 'base',
+    })
+    await expect(exposedApi!.settings.updateProcessingProviders({
+      transcriptionProvider: 'local_whisper', summaryProvider: 'codex_cli', localWhisperModel: 'small',
+    })).resolves.toEqual({
+      transcriptionProvider: 'local_whisper', summaryProvider: 'codex_cli', localWhisperModel: 'small',
+    })
+    expect(invoke).toHaveBeenLastCalledWith('settings:update-processing-providers', {
+      transcriptionProvider: 'local_whisper', summaryProvider: 'codex_cli', localWhisperModel: 'small',
+    })
+    invoke.mockResolvedValueOnce({ transcriptionProvider: 'bad' })
+    await expect(exposedApi!.settings.getProcessingProviders()).rejects.toThrow()
+    invoke.mockResolvedValueOnce({ summaryProvider: 'bad' })
+    await expect(exposedApi!.settings.updateProcessingProviders({
+      transcriptionProvider: 'openai', summaryProvider: 'openai', localWhisperModel: 'base',
+    })).rejects.toThrow()
+  })
+
   it('renders the API key settings card in Korean', async () => {
     const settings: DesktopApi['settings'] = {
+      ...processingSettingsApi(),
       saveApiKey: vi.fn().mockResolvedValue(undefined),
       getApiKeyStatus: vi.fn().mockResolvedValue({ configured: false, lastValidatedAt: null }),
       deleteApiKey: vi.fn().mockResolvedValue(undefined),
@@ -50,6 +100,7 @@ describe('API key settings', () => {
   it('saves a key and shows the configured status without rendering the secret', async () => {
     const user = userEvent.setup()
     const settings: DesktopApi['settings'] = {
+      ...processingSettingsApi(),
       saveApiKey: vi.fn().mockResolvedValue(undefined),
       getApiKeyStatus: vi
         .fn()
@@ -77,6 +128,7 @@ describe('API key settings', () => {
   it('keeps a successful save configured when the status refresh fails', async () => {
     const user = userEvent.setup()
     const settings: DesktopApi['settings'] = {
+      ...processingSettingsApi(),
       saveApiKey: vi.fn().mockResolvedValue(undefined),
       getApiKeyStatus: vi
         .fn()
@@ -100,6 +152,7 @@ describe('API key settings', () => {
 
   it('reports an unavailable initial status instead of claiming no key is configured', async () => {
     const settings: DesktopApi['settings'] = {
+      ...processingSettingsApi(),
       saveApiKey: vi.fn().mockResolvedValue(undefined),
       getApiKeyStatus: vi.fn().mockRejectedValue(new Error('status unavailable')),
       deleteApiKey: vi.fn().mockResolvedValue(undefined),
@@ -121,6 +174,7 @@ describe('API key settings', () => {
       resolveInitialStatus = resolve
     })
     const settings: DesktopApi['settings'] = {
+      ...processingSettingsApi(),
       saveApiKey: vi.fn().mockResolvedValue(undefined),
       getApiKeyStatus: vi
         .fn()

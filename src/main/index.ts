@@ -26,6 +26,7 @@ import { reconcileImportJournals } from './archive/importMeeting'
 import { bootstrapAfterImportRecovery } from './app/archiveStartup'
 import { parsePackageVerificationRequest } from './app/packageVerification'
 import { runPackageRuntimeVerification } from './app/runtimePackageVerification'
+import { ProcessingSettingsRepository } from './settings/processingSettingsRepository'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
@@ -47,7 +48,12 @@ if (verificationRequest !== null) {
       start: () => {
         const meetings = new MeetingRepository(database)
         const credentialStore = new KeyringCredentialStore()
-        registerSettingsHandlers(ipcMain, credentialStore, new OpenAiKeyValidator())
+        registerSettingsHandlers(
+          ipcMain,
+          credentialStore,
+          new OpenAiKeyValidator(),
+          new ProcessingSettingsRepository(database),
+        )
         const recordingService = new RecordingService(meetings, recordingsDirectory)
         const templateRepository = new TemplateRepository(database)
         const templateService = new TemplateService(templateRepository)

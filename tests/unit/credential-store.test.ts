@@ -20,6 +20,19 @@ class MemoryCredentialStore implements CredentialStore {
   }
 }
 
+const processingSettings = {
+  get: () => ({
+    transcriptionProvider: 'openai' as const,
+    summaryProvider: 'openai' as const,
+    localWhisperModel: 'base' as const,
+  }),
+  update: (input: {
+    transcriptionProvider: 'openai' | 'local_whisper'
+    summaryProvider: 'openai' | 'codex_cli'
+    localWhisperModel: 'base' | 'small'
+  }) => input,
+}
+
 describe('OpenAI credential settings', () => {
   it('maps a missing native keyring entry to null', async () => {
     const entry = {
@@ -59,6 +72,7 @@ describe('OpenAI credential settings', () => {
       { handle: (channel, handler) => handlers.set(channel, handler) },
       store,
       { validate },
+      processingSettings,
       () => new Date('2026-07-14T01:02:03.000Z'),
     )
 
@@ -88,6 +102,7 @@ describe('OpenAI credential settings', () => {
       { handle: (channel, handler) => handlers.set(channel, handler) },
       store,
       { validate: vi.fn().mockRejectedValue(new Error('Invalid API key')) },
+      processingSettings,
     )
 
     await expect(handlers.get('settings:save-api-key')?.({}, 'sk-invalid')).rejects.toThrow(

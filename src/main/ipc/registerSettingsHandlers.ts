@@ -1,5 +1,7 @@
 import type { CredentialStore } from '../credentials/credentialStore'
 import type { OpenAiKeyValidator } from '../ai/openAiKeyValidator'
+import type { ProcessingSettingsRepository } from '../settings/processingSettingsRepository'
+import { ProcessingProviderSettingsSchema } from '../../shared/contracts/settings'
 
 interface SettingsIpcMain {
   handle(
@@ -9,11 +11,13 @@ interface SettingsIpcMain {
 }
 
 type KeyValidator = Pick<OpenAiKeyValidator, 'validate'>
+type ProcessingSettings = Pick<ProcessingSettingsRepository, 'get' | 'update'>
 
 export function registerSettingsHandlers(
   ipcMain: SettingsIpcMain,
   credentials: CredentialStore,
   validator: KeyValidator,
+  processingSettings: ProcessingSettings,
   now: () => Date = () => new Date(),
 ): void {
   let lastValidatedAt: string | null = null
@@ -37,4 +41,10 @@ export function registerSettingsHandlers(
     await credentials.delete()
     lastValidatedAt = null
   })
+
+  ipcMain.handle('settings:get-processing-providers', async () => processingSettings.get())
+
+  ipcMain.handle('settings:update-processing-providers', async (_event, input) => (
+    processingSettings.update(ProcessingProviderSettingsSchema.parse(input))
+  ))
 }

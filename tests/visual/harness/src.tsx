@@ -20,7 +20,13 @@ const templateItems = [
   { id: 'default', name: '기본 템플릿', isDefault: true, sections: [{ id: '10000000-0000-4000-8000-000000000001', title: '핵심 요약', kind: 'paragraph' as const, prompt: '요약' }], createdAt: now, updatedAt: now },
 ]
 const templates = { list: async () => templateItems, create: async () => { throw new Error() }, update: async () => { throw new Error() }, reorderSections: async () => { throw new Error() }, delete: async () => {} }
-const settings = { getApiKeyStatus: async () => ({ configured: true, lastValidatedAt: '2026-07-14T08:30:00.000Z' }), saveApiKey: async () => {}, deleteApiKey: async () => {} }
+const settings = {
+  getApiKeyStatus: async () => ({ configured: true, lastValidatedAt: '2026-07-14T08:30:00.000Z' }),
+  saveApiKey: async () => {},
+  deleteApiKey: async () => {},
+  getProcessingProviders: async () => ({ transcriptionProvider: 'openai' as const, summaryProvider: 'openai' as const, localWhisperModel: 'base' as const }),
+  updateProcessingProviders: async (input: { transcriptionProvider: 'openai' | 'local_whisper'; summaryProvider: 'openai' | 'codex_cli'; localWhisperModel: 'base' | 'small' }) => input,
+}
 const archive = { exportMeeting: async () => ({ status: 'cancelled' as const }), exportMarkdown: async () => ({ status: 'cancelled' as const }), importMeeting: async () => ({ status: 'cancelled' as const }) }
 const processing = { getStatus: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), process: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), retry: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), onProgress: () => () => {} }
 const state = new URLSearchParams(location.search).get('state') ?? 'idle'
