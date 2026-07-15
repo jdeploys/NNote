@@ -46,6 +46,26 @@
 
 실제 API 키 값은 fixture와 이미지에 포함하지 않습니다.
 
+## 8. 처리 방식 고급 옵션
+
+기존 `07-api-key-settings.png`는 고급 처리 옵션 추가 직전 화면으로 그대로 보존합니다. 새 화면에서도 API 키 카드가 가장 먼저 보이고, 처리 방식은 두 번째 카드의 접힌 고급 옵션으로 배치됩니다.
+
+| 고급 옵션 추가 전 | 기본 상태 | 펼친 상태 |
+|---|---|---|
+| ![고급 옵션 추가 전 API 키 설정](after-linear/07-api-key-settings.png) | ![OpenAI 기본 처리 방식](after-linear/08-processing-provider-defaults.png) | ![펼친 고급 처리 옵션](after-linear/09-processing-provider-advanced.png) |
+
+### 기능별 상태
+
+| 로컬 모델 다운로드 | 로컬 모델 설치됨 |
+|---|---|
+| ![Whisper 모델 다운로드 진행률](after-linear/10-whisper-model-downloading.png) | ![Whisper 모델 설치 완료](after-linear/11-whisper-model-installed.png) |
+
+| Codex CLI 사용 가능 | Codex CLI 사용 불가 |
+|---|---|
+| ![Codex CLI 사용 가능](after-linear/12-codex-cli-available.png) | ![Codex CLI 설정 오류 안내](after-linear/13-codex-cli-unavailable.png) |
+
+모든 fixture는 고정된 모델 크기와 진행률, 안전한 가용성 코드만 사용합니다. API 키, 로컬 경로, 전사문 및 원시 진단은 이미지에 포함하지 않습니다.
+
 ## 다시 생성하기
 
 ```powershell
