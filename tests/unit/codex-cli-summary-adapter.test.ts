@@ -1,0 +1,285 @@
+import { EventEmitter } from 'node:events'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { PassThrough, Writable } from 'node:stream'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  createOwnedProcessRunner,
+  type OwnedProcessResult,
+  type SpawnProcess,
+} from '../../src/main/process/runOwnedProcess'
+import { CodexCliSummaryAdapter } from '../../src/main/ai/providers/codexCliSummaryAdapter'
+
+const schema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'items', 'choice'],
+  properties: {
+    title: { type: 'string', minLength: 1 },
+    items: { type: 'array', minItems: 1, maxItems: 2, items: { type: 'string' } },
+    choice: { anyOf: [{ type: 'string', enum: ['yes'] }, { type: 'null' }] },
+  },
+}
+
+const validSummary = { title: '회의', items: ['결정'], choice: null }
+const temporaryRoots: string[] = []
+
+async function temporaryRoot() {
+  const root = await mkdtemp(join(tmpdir(), 'nnote-codex-test-'))
+  temporaryRoots.push(root)
+  return root
+}
+
+afterEach(async () => {
+  const { rm } = await import('node:fs/promises')
+  await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+})
+
+function result(overrides: Partial<OwnedProcessResult> = {}): OwnedProcessResult {
+  return { status: 'success', exitCode: 0, stdout: '', stderr: '', ...overrides } as OwnedProcessResult
+}
+
+describe('CodexCliSummaryAdapter', () => {
+  it('runs codex in an isolated ephemeral read-only job and returns only schema-valid JSON', async () => {
+    const root = await temporaryRoot()
+    const run = vi.fn(async (request: { cwd: string }) => {
+      await writeFile(join(request.cwd, 'result.json'), JSON.stringify(validSummary), 'utf8')
+      return result()
+    })
+    const adapter = new CodexCliSummaryAdapter(run, root)
+
+    await expect(adapter.summarize({ input: 'secret meeting transcript', schema }))
+      .resolves.toBe(JSON.stringify(validSummary))
+    expect(run).toHaveBeenCalledWith({
+      command: 'codex',
+      args: [
+        'exec', '--ephemeral', '--sandbox', 'read-only', '--skip-git-repo-check',
+        '--output-schema', 'schema.json', '--output-last-message', 'result.json', '-',
+      ],
+      cwd: expect.stringContaining('nnote-codex-summary-'),
+      stdin: 'secret meeting transcript',
+    })
+    expect(await readdir(root)).toEqual([])
+  })
+
+  it('describes cloud text privacy and reports authenticated availability', async () => {
+    const adapter = new CodexCliSummaryAdapter(async () => result(), await temporaryRoot())
+    await expect(adapter.descriptor()).resolves.toEqual({
+      id: 'codex_cli',
+      stage: 'summary',
+      displayName: 'Codex CLI',
+      privacy: 'text_cloud',
+      capabilities: ['cli_status'],
+      availability: { available: true, code: null, message: null },
+    })
+  })
+
+  it.each([
+    ['missing command', { status: 'spawn_error', code: 'ENOENT' }, 'CODEX_NOT_INSTALLED'],
+    ['logged out', { status: 'nonzero_exit', exitCode: 1, stdout: '', stderr: 'Not logged in' }, 'CODEX_NOT_AUTHENTICATED'],
+    ['invalid config', { status: 'nonzero_exit', exitCode: 1, stdout: '', stderr: 'failed to parse config.toml at C:/secret' }, 'CODEX_CONFIG_INVALID'],
+    ['timeout', { status: 'timeout' }, 'CODEX_UNAVAILABLE'],
+    ['overflow', { status: 'output_overflow', stream: 'stderr' }, 'CODEX_UNAVAILABLE'],
+    ['unknown failure', { status: 'nonzero_exit', exitCode: 2, stdout: 'secret', stderr: 'C:/private' }, 'CODEX_UNAVAILABLE'],
+  ] as const)('classifies %s availability without leaking diagnostics', async (_name, processResult, code) => {
+    const adapter = new CodexCliSummaryAdapter(async () => processResult, await temporaryRoot())
+    const availability = await adapter.availability()
+    expect(availability).toMatchObject({ available: false, code })
+    expect(JSON.stringify(availability)).not.toMatch(/secret|private|config\.toml/i)
+  })
+
+  it.each([
+    ['object type', []],
+    ['array type', { ...validSummary, items: 'wrong' }],
+    ['scalar type', { ...validSummary, title: 3 }],
+    ['required keys', { items: ['결정'], choice: null }],
+    ['enum', { ...validSummary, choice: 'no' }],
+    ['additional properties', { ...validSummary, extra: true }],
+    ['minItems', { ...validSummary, items: [] }],
+    ['maxItems', { ...validSummary, items: ['1', '2', '3'] }],
+    ['array item type', { ...validSummary, items: [3] }],
+    ['minLength', { ...validSummary, title: '' }],
+    ['anyOf', { ...validSummary, choice: 42 }],
+  ])('rejects output violating JSON Schema %s', async (_boundary, invalidValue) => {
+    const root = await temporaryRoot()
+    const adapter = new CodexCliSummaryAdapter(async ({ cwd }) => {
+      await writeFile(join(cwd, 'result.json'), JSON.stringify(invalidValue), 'utf8')
+      return result()
+    }, root)
+    await expect(adapter.summarize({ input: 'transcript', schema })).rejects.toMatchObject({
+      code: 'CODEX_INVALID_SUMMARY',
+      retryable: false,
+    })
+  })
+
+  it('maps unexpected runner and filesystem failures without leaking their raw values', async () => {
+    const root = await temporaryRoot()
+    const runnerAdapter = new CodexCliSummaryAdapter(
+      async () => { throw new Error('TOP SECRET PROMPT at C:/private/path') },
+      root,
+    )
+    const runnerError = await runnerAdapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
+    expect(runnerError).toMatchObject({ code: 'CODEX_UNAVAILABLE', retryable: true })
+    expect(runnerError.message).not.toMatch(/TOP SECRET|private/i)
+    await expect(runnerAdapter.availability()).resolves.toEqual({
+      available: false,
+      code: 'CODEX_UNAVAILABLE',
+      message: 'Codex CLI is unavailable.',
+    })
+
+    const missingRoot = join(root, 'missing', 'private')
+    const filesystemAdapter = new CodexCliSummaryAdapter(async () => result(), missingRoot)
+    const filesystemError = await filesystemAdapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
+    expect(filesystemError).toMatchObject({ code: 'CODEX_UNAVAILABLE', retryable: true })
+    expect(filesystemError.message).not.toMatch(/TOP SECRET|private|missing/i)
+  })
+
+  it('does not let cleanup failure replace the original safe provider error', async () => {
+    const root = await temporaryRoot()
+    const adapter = new CodexCliSummaryAdapter(
+      async () => ({ status: 'timeout' }),
+      root,
+      { mkdtemp, readFile, writeFile, rm: async () => { throw new Error('C:/private/cleanup') } },
+    )
+    await expect(adapter.summarize({ input: 'TOP SECRET PROMPT', schema })).rejects.toMatchObject({
+      code: 'CODEX_UNAVAILABLE',
+      message: 'Codex CLI summary failed.',
+      retryable: true,
+    })
+  })
+
+  it.each([
+    ['ENOENT', { status: 'spawn_error', code: 'ENOENT' }],
+    ['timeout', { status: 'timeout' }],
+    ['overflow', { status: 'output_overflow', stream: 'stdout' }],
+    ['nonzero', { status: 'nonzero_exit', exitCode: 3, stdout: 'secret stdout', stderr: 'C:/private/stderr' }],
+  ] as const)('maps %s execution failure without exposing paths, prompts, stdout, or stderr', async (_name, processResult) => {
+    const root = await temporaryRoot()
+    const adapter = new CodexCliSummaryAdapter(async () => processResult, root)
+    const error = await adapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
+    expect(error).toMatchObject({ retryable: true })
+    expect(`${error.code} ${error.message}`).not.toMatch(/TOP SECRET|private|stdout|stderr|nnote-codex-summary/i)
+    expect(await readdir(root)).toEqual([])
+  })
+
+  it.each([
+    ['missing-result', null],
+    ['malformed', '{not json'],
+    ['schema-mismatch', JSON.stringify({ title: '', items: [], choice: 'no', extra: true })],
+  ] as const)('rejects %s output with a stable safe non-retryable error', async (_name, output) => {
+    const root = await temporaryRoot()
+    const adapter = new CodexCliSummaryAdapter(async ({ cwd }) => {
+      if (output !== null) await writeFile(join(cwd, 'result.json'), output, 'utf8')
+      return result({ stdout: 'secret stdout', stderr: 'C:/private/stderr' })
+    }, root)
+    const error = await adapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
+    expect(error).toMatchObject({ code: 'CODEX_INVALID_SUMMARY', retryable: false })
+    expect(error.message).toBe('Codex CLI returned an invalid summary response.')
+    expect(await readdir(root)).toEqual([])
+  })
+})
+
+function fakeChild() {
+  const child = new EventEmitter() as EventEmitter & {
+    pid: number
+    stdin: Writable
+    stdout: PassThrough
+    stderr: PassThrough
+    kill: () => boolean
+  }
+  child.pid = 4321
+  child.stdin = new PassThrough()
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => true
+  return child
+}
+
+describe('runOwnedProcess', () => {
+  it('classifies a synchronous spawn failure without returning its raw error', async () => {
+    const spawnProcess = (() => {
+      const error = Object.assign(new Error('C:/private/codex.exe'), { code: 'ENOENT' })
+      throw error
+    }) as SpawnProcess
+    const run = createOwnedProcessRunner({ spawnProcess })
+    await expect(run({ command: 'codex', args: [], cwd: 'C:/owned' }))
+      .resolves.toEqual({ status: 'spawn_error', code: 'ENOENT' })
+  })
+
+  it('uses shell false, forwards exact argv, writes stdin once, and closes it', async () => {
+    const child = fakeChild()
+    const chunks: Buffer[] = []
+    child.stdin.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+    const spawnProcess = vi.fn(() => child) as unknown as SpawnProcess
+    const run = createOwnedProcessRunner({ spawnProcess })
+    const pending = run({ command: 'codex', args: ['login', 'status'], cwd: 'C:/owned', stdin: 'hello' })
+    child.emit('close', 0, null)
+
+    await expect(pending).resolves.toMatchObject({ status: 'success', exitCode: 0 })
+    expect(spawnProcess).toHaveBeenCalledWith('codex', ['login', 'status'], expect.objectContaining({
+      shell: false,
+      cwd: 'C:/owned',
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }))
+    expect(Buffer.concat(chunks).toString()).toBe('hello')
+    expect((child.stdin as PassThrough).writableEnded).toBe(true)
+  })
+
+  it('terminates its owned process tree and settles once on timeout', async () => {
+    vi.useFakeTimers()
+    const child = fakeChild()
+    const terminateProcessTree = vi.fn(async () => undefined)
+    const run = createOwnedProcessRunner({ spawnProcess: (() => child) as unknown as SpawnProcess, terminateProcessTree })
+    const pending = run({ command: 'codex', args: [], cwd: 'C:/owned', timeoutMs: 5 })
+    await vi.advanceTimersByTimeAsync(5)
+    await expect(pending).resolves.toEqual({ status: 'timeout' })
+    expect(terminateProcessTree).toHaveBeenCalledWith(child)
+    child.emit('close', 0, null)
+    expect(terminateProcessTree).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('independently rejects stdout beyond the default 1 MiB cap', async () => {
+    const child = fakeChild()
+    const terminateProcessTree = vi.fn(async () => undefined)
+    const run = createOwnedProcessRunner({ spawnProcess: (() => child) as unknown as SpawnProcess, terminateProcessTree })
+    const pending = run({ command: 'codex', args: [], cwd: 'C:/owned' })
+    child.stdout.write(Buffer.alloc(1024 * 1024 + 1))
+    await expect(pending).resolves.toEqual({ status: 'output_overflow', stream: 'stdout' })
+    expect(terminateProcessTree).toHaveBeenCalledWith(child)
+  })
+
+  it('independently rejects stderr beyond the default 1 MiB cap', async () => {
+    const child = fakeChild()
+    const terminateProcessTree = vi.fn(async () => undefined)
+    const run = createOwnedProcessRunner({ spawnProcess: (() => child) as unknown as SpawnProcess, terminateProcessTree })
+    const pending = run({ command: 'codex', args: [], cwd: 'C:/owned' })
+    child.stderr.write(Buffer.alloc(1024 * 1024 + 1))
+    await expect(pending).resolves.toEqual({ status: 'output_overflow', stream: 'stderr' })
+    expect(terminateProcessTree).toHaveBeenCalledWith(child)
+  })
+
+  it('terminates only its owned tree when cancelled', async () => {
+    const child = fakeChild()
+    const terminateProcessTree = vi.fn(async () => undefined)
+    const controller = new AbortController()
+    const run = createOwnedProcessRunner({ spawnProcess: (() => child) as unknown as SpawnProcess, terminateProcessTree })
+    const pending = run({ command: 'codex', args: [], cwd: 'C:/owned', signal: controller.signal })
+    controller.abort()
+    await expect(pending).resolves.toEqual({ status: 'cancelled' })
+    expect(terminateProcessTree).toHaveBeenCalledWith(child)
+  })
+
+  it('returns a classified non-zero result without throwing raw diagnostics', async () => {
+    const child = fakeChild()
+    const run = createOwnedProcessRunner({ spawnProcess: (() => child) as unknown as SpawnProcess })
+    const pending = run({ command: 'codex', args: [], cwd: 'C:/owned' })
+    child.stderr.write('diagnostic')
+    child.emit('close', 7, null)
+    await expect(pending).resolves.toEqual({
+      status: 'nonzero_exit', exitCode: 7, stdout: '', stderr: 'diagnostic',
+    })
+  })
+})

@@ -30,6 +30,8 @@ import { ProcessingSettingsRepository } from './settings/processingSettingsRepos
 import { OpenAiTranscriptionAdapter } from './ai/providers/openAiTranscriptionAdapter'
 import { OpenAiSummaryAdapter } from './ai/providers/openAiSummaryAdapter'
 import { ProviderRegistry } from './ai/providers/providerRegistry'
+import { CodexCliSummaryAdapter } from './ai/providers/codexCliSummaryAdapter'
+import { runOwnedProcess } from './process/runOwnedProcess'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
@@ -54,7 +56,10 @@ if (verificationRequest !== null) {
         const processingSettings = new ProcessingSettingsRepository(database)
         const registry = new ProviderRegistry(
           [new OpenAiTranscriptionAdapter(new OpenAiGateway(credentialStore))],
-          [new OpenAiSummaryAdapter(new OpenAiSummaryGateway(credentialStore))],
+          [
+            new OpenAiSummaryAdapter(new OpenAiSummaryGateway(credentialStore)),
+            new CodexCliSummaryAdapter(runOwnedProcess, app.getPath('temp')),
+          ],
         )
         registerSettingsHandlers(
           ipcMain,
