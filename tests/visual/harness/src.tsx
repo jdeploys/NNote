@@ -5,11 +5,22 @@ import '../../../src/renderer/src/styles/app.css'
 import './visual.css'
 import { Dashboard } from '../../../src/renderer/src/features/meetings/Dashboard'
 import { MeetingDetail } from '../../../src/renderer/src/features/meetings/MeetingDetail'
+import { ApiKeySettings } from '../../../src/renderer/src/features/settings/ApiKeySettings'
+import { TemplateEditor } from '../../../src/renderer/src/features/templates/TemplateEditor'
 
 const now = '2026-07-15T00:00:00.000Z'
 const meeting = (id: string, title: string, status: 'completed' | 'recorded' | 'failed' | 'recoverable') => ({ id, title, status, createdAt: now, updatedAt: now, durationMs: 3_845_000, audioPolicy: 'keep' as const, hasAudio: status === 'completed', audioByteCount: 12_000, selectedTemplateId: null })
 const controls = { start: async () => {}, stop: async () => {}, discard: async () => {}, pause: async () => {}, resume: async () => {} }
-const templates = { list: async () => [{ id: 'default', name: '기본 템플릿', isDefault: true, sections: [{ id: '10000000-0000-4000-8000-000000000001', title: '핵심 요약', kind: 'paragraph' as const, prompt: '요약' }], createdAt: now, updatedAt: now }], create: async () => { throw new Error() }, update: async () => { throw new Error() }, reorderSections: async () => { throw new Error() }, delete: async () => {} }
+const templateItems = [
+  { id: 'interview', name: '고객 인터뷰', isDefault: false, sections: [
+    { id: '20000000-0000-4000-8000-000000000001', title: '고객의 문제', kind: 'paragraph' as const, prompt: '고객이 겪는 핵심 문제를 요약하세요.' },
+    { id: '20000000-0000-4000-8000-000000000002', title: '인사이트', kind: 'bullet_list' as const, prompt: '새롭게 발견한 인사이트를 정리하세요.' },
+    { id: '20000000-0000-4000-8000-000000000003', title: '후속 작업', kind: 'action_items' as const, prompt: '담당자가 있는 후속 작업을 추출하세요.' },
+  ], createdAt: now, updatedAt: now },
+  { id: 'default', name: '기본 템플릿', isDefault: true, sections: [{ id: '10000000-0000-4000-8000-000000000001', title: '핵심 요약', kind: 'paragraph' as const, prompt: '요약' }], createdAt: now, updatedAt: now },
+]
+const templates = { list: async () => templateItems, create: async () => { throw new Error() }, update: async () => { throw new Error() }, reorderSections: async () => { throw new Error() }, delete: async () => {} }
+const settings = { getApiKeyStatus: async () => ({ configured: true, lastValidatedAt: '2026-07-14T08:30:00.000Z' }), saveApiKey: async () => {}, deleteApiKey: async () => {} }
 const archive = { exportMeeting: async () => ({ status: 'cancelled' as const }), exportMarkdown: async () => ({ status: 'cancelled' as const }), importMeeting: async () => ({ status: 'cancelled' as const }) }
 const processing = { getStatus: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), process: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), retry: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), onProgress: () => () => {} }
 const state = new URLSearchParams(location.search).get('state') ?? 'idle'
@@ -33,5 +44,9 @@ const detail = {
 }
 const view = state === 'completed'
   ? <MeetingDetail document={detail} archive={archive} processing={processing} initialProcessingStatus={{ meetingId: 'meeting-1', state: 'completed', failedStage: null, retryable: false, audioRequired: false, error: null }} onBack={() => {}} onRenameSpeaker={async () => detail.speakers[1]} />
-  : <Dashboard meetings={state === 'idle' ? [] : common} recordingControls={controls} templates={templates} onImport={() => {}} onOpenMeeting={() => {}} onNavigate={() => {}} />
+  : state === 'templates'
+    ? <main className="document-shell"><button type="button">← 전체 기록</button><h1>요약 템플릿</h1><TemplateEditor templates={templates} /></main>
+    : state === 'settings'
+      ? <main className="document-shell"><button type="button">← 전체 기록</button><h1>설정</h1><ApiKeySettings settings={settings} /></main>
+      : <Dashboard meetings={state === 'idle' ? [] : common} recordingControls={controls} templates={templates} onImport={() => {}} onOpenMeeting={() => {}} onNavigate={() => {}} />
 createRoot(document.getElementById('root')!).render(view)
