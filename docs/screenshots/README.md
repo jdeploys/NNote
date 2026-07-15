@@ -1,48 +1,50 @@
-# Nnote feature screenshots
+# Nnote design comparison
 
-Windows 기준 1280×900 뷰포트에서 고정 fixture로 캡처한 현재 UI입니다. 회의 상세 화면은 전체 문서를 보여주기 위해 세로 길이가 더 깁니다.
+동일한 Windows 1280×900 viewport와 고정 fixture로 캡처한 기능별 Before/After 비교입니다. 기존 Before 이미지는 checksum으로 고정되어 있으며 리디자인 과정에서 변경하지 않았습니다.
 
 ## 1. 대시보드와 새 회의
 
-로컬 녹음 옵션, 요약 템플릿, 오디오 보존 정책과 빈 기록 목록을 보여줍니다.
-
-![대시보드와 새 회의](01-dashboard.png)
+| Before | After |
+|---|---|
+| ![기존 대시보드](01-dashboard.png) | ![Linear-inspired 대시보드](after-linear/01-dashboard.png) |
 
 ## 2. 로컬 녹음
 
-녹음 시간·저장 크기·파트 상태와 일시정지, 종료, 폐기 동작을 보여줍니다.
-
-![로컬 녹음](02-recording.png)
+| Before | After |
+|---|---|
+| ![기존 녹음 화면](02-recording.png) | ![Linear-inspired 녹음 화면](after-linear/02-recording.png) |
 
 ## 3. 중단된 녹음 복구
 
-비정상 종료 뒤 복구할 수 있는 회의가 기록 목록에 표시된 상태입니다.
-
-![중단된 녹음 복구](03-recovery.png)
+| Before | After |
+|---|---|
+| ![기존 복구 상태](03-recovery.png) | ![Linear-inspired 복구 상태](after-linear/03-recovery.png) |
 
 ## 4. 처리 실패 상태
 
-전사 또는 요약 처리에 실패한 회의와 정상 완료 회의를 함께 보여줍니다.
-
-![처리 실패 상태](04-processing-failed.png)
+| Before | After |
+|---|---|
+| ![기존 처리 실패 상태](04-processing-failed.png) | ![Linear-inspired 처리 실패 상태](after-linear/04-processing-failed.png) |
 
 ## 5. 완성된 회의 문서
 
-멀티파트 오디오, 처리 상태, `.nnote`·Markdown 내보내기, 요약, 할 일, 화자 이름, 전체 전사문과 Markdown 미리보기를 보여줍니다.
-
-![완성된 회의 문서](05-meeting-detail.png)
+| Before | After |
+|---|---|
+| ![기존 회의 문서](05-meeting-detail.png) | ![Linear-inspired 회의 문서](after-linear/05-meeting-detail.png) |
 
 ## 6. 요약 템플릿 편집
 
-템플릿 선택, 이름 변경, 1–8개 섹션의 제목·종류·지시문·순서 편집을 보여줍니다.
-
-![요약 템플릿 편집](06-template-editor.png)
+| Before | After |
+|---|---|
+| ![기존 템플릿 편집기](06-template-editor.png) | ![Linear-inspired 템플릿 편집기](after-linear/06-template-editor.png) |
 
 ## 7. OpenAI API 키 설정
 
-OS 자격 증명 저장소에 보관되는 API 키의 설정 상태, 저장과 삭제 동작을 보여줍니다. 실제 키 값은 캡처에 포함하지 않습니다.
+| Before | After |
+|---|---|
+| ![기존 API 키 설정](07-api-key-settings.png) | ![Linear-inspired API 키 설정](after-linear/07-api-key-settings.png) |
 
-![OpenAI API 키 설정](07-api-key-settings.png)
+실제 API 키 값은 fixture와 이미지에 포함하지 않습니다.
 
 ## 다시 생성하기
 

@@ -13,10 +13,13 @@ describe('Task 10 visual baseline platform gate', () => {
   it('uses the Linear-inspired dark token contract without legacy decoration', () => {
     const tokens = readFileSync(resolve('src/renderer/src/styles/tokens.css'), 'utf8')
     const styles = readFileSync(resolve('src/renderer/src/styles/app.css'), 'utf8')
+    const harness = readFileSync(resolve('tests/visual/harness/visual.css'), 'utf8')
 
     expect(tokens).toContain('--canvas: #010102')
     expect(tokens).toContain('--primary: #5e6ad2')
     expect(tokens).toContain('--surface-1: #0f1011')
     expect(`${tokens}\n${styles}`).not.toMatch(/Georgia|linear-gradient|#176c4f/i)
+    expect(harness).toContain('background: var(--canvas)')
+    expect(harness).not.toContain('#fbfaf6')
   })
 })
