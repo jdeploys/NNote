@@ -178,6 +178,29 @@ describe('CodexCliSummaryAdapter', () => {
     expect(error.message).toBe('Codex CLI returned an invalid summary response.')
     expect(await readdir(root)).toEqual([])
   })
+
+  it.each(['EACCES', 'EMFILE'] as const)(
+    'maps %s while reading the result to a retryable safe runtime failure',
+    async (code) => {
+      const root = await temporaryRoot()
+      const adapter = new CodexCliSummaryAdapter(
+        async () => result(),
+        root,
+        {
+          mkdtemp,
+          writeFile,
+          rm,
+          readFile: (async () => {
+            throw Object.assign(new Error(`TOP SECRET at C:/private/result.json`), { code })
+          }) as typeof readFile,
+        },
+      )
+      const error = await adapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
+      expect(error).toMatchObject({ code: 'CODEX_UNAVAILABLE', retryable: true })
+      expect(error.message).toBe('Codex CLI summary failed.')
+      expect(`${error.code} ${error.message}`).not.toMatch(/TOP SECRET|private|result\.json/i)
+    },
+  )
 })
 
 function fakeChild() {
@@ -270,6 +293,21 @@ describe('runOwnedProcess', () => {
     controller.abort()
     await expect(pending).resolves.toEqual({ status: 'cancelled' })
     expect(terminateProcessTree).toHaveBeenCalledWith(child)
+  })
+
+  it('still resolves safely when owned-tree termination rejects', async () => {
+    vi.useFakeTimers()
+    const child = fakeChild()
+    const terminateProcessTree = vi.fn(async () => { throw new Error('termination failed') })
+    const run = createOwnedProcessRunner({
+      spawnProcess: (() => child) as unknown as SpawnProcess,
+      terminateProcessTree,
+    })
+    const pending = run({ command: 'codex', args: [], cwd: 'C:/owned', timeoutMs: 5 })
+    await vi.advanceTimersByTimeAsync(5)
+    await expect(pending).resolves.toEqual({ status: 'timeout' })
+    await vi.runAllTimersAsync()
+    vi.useRealTimers()
   })
 
   it('returns a classified non-zero result without throwing raw diagnostics', async () => {

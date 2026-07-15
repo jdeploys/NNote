@@ -81,9 +81,16 @@ export class CodexCliSummaryAdapter implements SummaryProvider {
       })
       if (processResult.status !== 'success') throw executionError(processResult)
 
+      let resultText: string
+      try {
+        resultText = await this.files.readFile(join(ownedDirectory, 'result.json'), 'utf8')
+      } catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) throw invalidSummaryError()
+        throw safeProviderError('CODEX_UNAVAILABLE', 'Codex CLI summary failed.', true)
+      }
       let parsed: unknown
       try {
-        parsed = JSON.parse(await this.files.readFile(join(ownedDirectory, 'result.json'), 'utf8'))
+        parsed = JSON.parse(resultText)
       } catch {
         throw invalidSummaryError()
       }
@@ -182,4 +189,8 @@ function validateSchema(value: unknown, schema: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return isRecord(error) && error.code === code
 }

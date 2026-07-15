@@ -100,7 +100,10 @@ export function createOwnedProcessRunner(dependencies: {
         if (settled) return
         settled = true
         cleanup()
-        void terminateProcessTree(child).finally(() => resolve(value))
+        void terminateProcessTree(child).then(
+          () => resolve(value),
+          () => resolve(value),
+        )
       }
       const collect = (stream: 'stdout' | 'stderr', chunk: Buffer | string) => {
         if (settled) return
