@@ -50,6 +50,23 @@ describe('OpenAiSummaryGateway', () => {
       .resolves.toBe('{"sections":[]}')
   })
 
+  it('maps a raw OpenAI gateway failure through the adapter without leaking its canary', async () => {
+    const adapter = new OpenAiSummaryAdapter({
+      summarize: vi.fn(async () => {
+        throw Object.assign(new Error('summary adapter canary secret'), { status: 401 })
+      }),
+    })
+
+    const failure = await adapter.summarize({ input: 'x', schema: {} }).catch((error: unknown) => error)
+
+    expect(failure).toMatchObject({
+      code: 'OPENAI_UNAUTHORIZED',
+      message: 'OpenAI rejected the API key.',
+      retryable: false,
+    })
+    expect(String(failure)).not.toContain('summary adapter canary secret')
+  })
+
   it('uses gpt-5-mini and the exact Responses API strict structured-output boundary', async () => {
     const create = vi.fn(async () => ({ status: 'completed', output_text: JSON.stringify({ sections: [], actionItems: [] }), output: [] }))
     const gateway = new OpenAiSummaryGateway(

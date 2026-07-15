@@ -387,6 +387,18 @@ describe('NodeWhisperModelStorage secure file handles', () => {
     )
   })
 
+  it('truncates and appends an owned regular partial through production storage', async () => {
+    const { root, storage } = await temporaryRoot()
+    const partial = join(root, 'ggml-base.bin.partial')
+    const progress: number[] = []
+
+    await storage.write(partial, bytes('fresh'), 'truncate', 10, (received) => progress.push(received))
+    await storage.write(partial, bytes(' data'), 'append', 10, (received) => progress.push(received))
+
+    await expect(readFile(partial, 'utf8')).resolves.toBe('fresh data')
+    expect(progress).toEqual([5, 10])
+  })
+
   it('rejects a final symlink at open time without reading its target', async () => {
     const { parent, root, storage } = await temporaryRoot()
     const target = join(parent, 'outside-secret')

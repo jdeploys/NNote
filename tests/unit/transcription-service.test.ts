@@ -11,6 +11,7 @@ import { OpenAiGateway, type OpenAiTranscriptionClient } from '../../src/main/ai
 import { OpenAiError, toOpenAiError } from '../../src/main/ai/openAiErrors'
 import { TranscriptionService } from '../../src/main/ai/transcriptionService'
 import { OpenAiTranscriptionAdapter } from '../../src/main/ai/providers/openAiTranscriptionAdapter'
+import { LocalWhisperTranscriptionAdapter } from '../../src/main/ai/providers/localWhisperTranscriptionAdapter'
 import { ProviderRegistry } from '../../src/main/ai/providers/providerRegistry'
 import { safeProviderError, toProviderError } from '../../src/main/ai/providers/providerErrors'
 import { completedPartPath } from '../../src/main/recording/recordingPaths'
@@ -72,7 +73,15 @@ describe('OpenAiGateway', () => {
     const runOwnedProcess = vi.fn()
     const gateway = { transcribe: vi.fn(async () => ({ durationSeconds: 1, segments: [] })) }
     const openAi = new OpenAiTranscriptionAdapter(gateway)
-    const registry = new ProviderRegistry([openAi], [])
+    const localWhisper = new LocalWhisperTranscriptionAdapter({
+      resolveRuntimePaths: async () => ({ whisperPath: 'whisper-cli', ffmpegPath: 'ffmpeg' }),
+      verifiedModelPath: async () => 'ggml-base.bin',
+      resolveModel: () => 'base',
+      recordingsRoot: 'recordings',
+      temporaryRoot: 'temporary',
+      runProcess: runOwnedProcess,
+    })
+    const registry = new ProviderRegistry([openAi, localWhisper], [])
 
     await registry.transcription('openai').transcribe({ filePath: 'meeting.webm', recordingDurationSeconds: 1 })
 

@@ -43,6 +43,27 @@ describe('processing settings repository', () => {
     database.close()
   })
 
+  it('returns an independent default value after a caller mutates an earlier fallback', () => {
+    const database = openDatabase(temporaryDatabasePath())
+    const settings = new ProcessingSettingsRepository(database)
+    database.prepare('UPDATE app_settings SET value_json = ? WHERE key = ?')
+      .run('{"transcriptionProvider":"invalid"}', 'processing_providers')
+    const first = settings.get()
+
+    first.transcriptionProvider = 'local_whisper'
+    first.summaryProvider = 'codex_cli'
+    first.localWhisperModel = 'small'
+
+    expect(settings.get()).toEqual({
+      transcriptionProvider: 'openai',
+      summaryProvider: 'openai',
+      localWhisperModel: 'base',
+    })
+    expect(database.prepare('SELECT value_json FROM app_settings WHERE key = ?').pluck().get('processing_providers'))
+      .toBe('{"transcriptionProvider":"invalid"}')
+    database.close()
+  })
+
   it('persists only known provider IDs and reconciles invalid stored values', () => {
     const database = openDatabase(temporaryDatabasePath())
     const settings = new ProcessingSettingsRepository(database)

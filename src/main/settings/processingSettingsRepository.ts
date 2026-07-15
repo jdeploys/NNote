@@ -23,7 +23,7 @@ export class ProcessingSettingsRepository {
       stored = null
     }
     const parsed = ProcessingProviderSettingsSchema.safeParse(stored)
-    return parsed.success ? parsed.data : defaultProcessingProviderSettings
+    return parsed.success ? parsed.data : { ...defaultProcessingProviderSettings }
   }
 
   update(input: ProcessingProviderSettings): ProcessingProviderSettings {
