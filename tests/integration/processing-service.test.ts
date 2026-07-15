@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -141,18 +141,19 @@ describe('ProcessingService', () => {
     h.database.close()
   })
 
-  it('deletes non-primary parts first and preserves coherent primary metadata when primary deletion fails', async () => {
+  it('deletes canonical macOS-safe non-primary paths first and preserves coherent primary metadata when primary deletion fails', async () => {
     const h = harness({ policy: 'delete_after_processing' })
+    const expectedRemoves = [realpathSync(h.second), realpathSync(h.first)]
     const removes: string[] = []
     const service = new ProcessingService(h.meetings, { transcribeMeeting: h.transcribe }, { summarizeMeeting: h.summarize }, join(h.first, '..'), {
       remove: async (path) => {
         removes.push(path)
-        if (path === h.first) throw Object.assign(new Error('locked primary'), { code: 'EBUSY' })
+        if (path === expectedRemoves[1]) throw Object.assign(new Error('locked primary'), { code: 'EBUSY' })
         rmSync(path, { force: true })
       },
     })
     await service.process('meeting-1')
-    expect(removes).toEqual([h.second, h.first])
+    expect(removes).toEqual(expectedRemoves)
     expect(existsSync(h.second)).toBe(false)
     expect(existsSync(h.first)).toBe(true)
     expect(h.meetings.requireById('meeting-1')).toMatchObject({ audioPath: basename(h.first), audioByteCount: 3, status: 'completed' })
