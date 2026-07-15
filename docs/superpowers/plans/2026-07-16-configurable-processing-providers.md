@@ -122,9 +122,13 @@ Commit: `git add src/main/settings src/shared/contracts/settings.ts src/main/db/
 - Create: `src/main/ai/providers/providerRegistry.ts`
 - Create: `src/main/ai/providers/openAiTranscriptionAdapter.ts`
 - Create: `src/main/ai/providers/openAiSummaryAdapter.ts`
+- Create: `src/main/ai/providers/providerErrors.ts`
 - Create: `tests/unit/provider-registry.test.ts`
+- Modify: `src/shared/contracts/settings.ts`
 - Modify: `src/main/ai/transcriptionService.ts`
 - Modify: `src/main/ai/summaryService.ts`
+- Modify: `src/main/ipc/registerSettingsHandlers.ts`
+- Modify: `src/preload/index.ts`
 - Modify: `src/main/index.ts`
 - Test: `tests/unit/transcription-service.test.ts`
 - Test: `tests/unit/summary-service.test.ts`
@@ -139,9 +143,14 @@ Commit: `git add src/main/settings src/shared/contracts/settings.ts src/main/db/
 
 ```ts
 it('resolves each stable provider ID exactly once', () => {
-  const registry = new ProviderRegistry({ openai: openAiTranscription, local_whisper: localTranscription }, { openai: openAiSummary, codex_cli: codexSummary })
+  const registry = new ProviderRegistry([openAiTranscription, localTranscription], [openAiSummary, codexSummary])
   expect(registry.transcription('local_whisper')).toBe(localTranscription)
   expect(registry.summary('codex_cli')).toBe(codexSummary)
+})
+
+it('rejects duplicate IDs at composition time', () => {
+  expect(() => new ProviderRegistry([openAiTranscription, openAiTranscription], [openAiSummary]))
+    .toThrow(/duplicate transcription provider/i)
 })
 
 it('rejects unknown runtime IDs instead of silently selecting another provider', () => {
@@ -176,11 +185,13 @@ export interface NormalizedTranscriptSegment {
 export interface NormalizedTranscription { durationSeconds: number; segments: NormalizedTranscriptSegment[] }
 export interface TranscriptionProvider {
   readonly id: TranscriptionProviderId
+  descriptor(): Promise<ProviderDescriptor>
   availability(): Promise<ProviderAvailability>
   transcribe(request: TranscriptionProviderRequest): Promise<NormalizedTranscription>
 }
 export interface SummaryProvider {
   readonly id: SummaryProviderId
+  descriptor(): Promise<ProviderDescriptor>
   availability(): Promise<ProviderAvailability>
   summarize(request: SummaryRequest): Promise<string>
 }
@@ -193,21 +204,28 @@ The OpenAI transcription adapter translates `{ filePath }` into the existing Ope
 ```ts
 export class ProviderRegistry {
   constructor(
-    private readonly transcriptions: Readonly<Record<TranscriptionProviderId, TranscriptionProvider>>,
-    private readonly summaries: Readonly<Record<SummaryProviderId, SummaryProvider>>,
-  ) {}
+    transcriptions: readonly TranscriptionProvider[],
+    summaries: readonly SummaryProvider[],
+  ) {
+    this.transcriptions = uniqueProviders(transcriptions, 'transcription')
+    this.summaries = uniqueProviders(summaries, 'summary')
+  }
+  private readonly transcriptions: ReadonlyMap<TranscriptionProviderId, TranscriptionProvider>
+  private readonly summaries: ReadonlyMap<SummaryProviderId, SummaryProvider>
   transcription(id: TranscriptionProviderId): TranscriptionProvider {
-    const provider = this.transcriptions[id]
+    const provider = this.transcriptions.get(id)
     if (provider === undefined) throw new Error(`Unknown transcription provider: ${id}`)
     return provider
   }
   summary(id: SummaryProviderId): SummaryProvider {
-    const provider = this.summaries[id]
+    const provider = this.summaries.get(id)
     if (provider === undefined) throw new Error(`Unknown summary provider: ${id}`)
     return provider
   }
 }
 ```
+
+`uniqueProviders` builds a map and throws on a duplicate ID. In Task 2 production registers only the two OpenAI adapters. Tasks 3 and 5 add Codex and Whisper to the corresponding constructor array; do not create placeholder adapters for providers that are not implemented yet.
 
 At the composition root, create two resolver closures: `() => registry.transcription(settings.get().transcriptionProvider)` and `() => registry.summary(settings.get().summaryProvider)`. Inject those closures into `TranscriptionService` and `SummaryService`, which resolve once at the beginning of their stage. This makes retry use the current setting without provider-ID branches in `ProcessingService`, `TranscriptionService`, or `SummaryService`.
 
