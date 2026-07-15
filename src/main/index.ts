@@ -33,6 +33,7 @@ import { ProviderRegistry } from './ai/providers/providerRegistry'
 import { CodexCliSummaryAdapter } from './ai/providers/codexCliSummaryAdapter'
 import { runOwnedProcess } from './process/runOwnedProcess'
 import { WhisperModelManager } from './localModels/whisperModelManager'
+import { publishWhisperProgressToLiveWindows } from './window/publishWhisperProgress'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
@@ -70,13 +71,7 @@ if (verificationRequest !== null) {
           processingSettings,
           registry,
           whisperModels,
-          (progress) => {
-            for (const window of BrowserWindow.getAllWindows()) {
-              if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-                window.webContents.send('settings:whisper-model-progress', progress)
-              }
-            }
-          },
+          (progress) => publishWhisperProgressToLiveWindows(BrowserWindow.getAllWindows(), progress),
         )
         const recordingService = new RecordingService(meetings, recordingsDirectory)
         const templateRepository = new TemplateRepository(database)

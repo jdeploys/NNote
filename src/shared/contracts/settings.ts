@@ -34,9 +34,22 @@ export const ProcessingProviderSettingsSchema = z.object({
 
 export type ProcessingProviderSettings = z.infer<typeof ProcessingProviderSettingsSchema>
 
+export const WhisperModelErrorCodeSchema = z.enum([
+  'WHISPER_MODEL_DIGEST_MISMATCH',
+  'WHISPER_MODEL_SIZE_MISMATCH',
+  'WHISPER_MODEL_INVALID_FILE',
+  'WHISPER_MODEL_NOT_INSTALLED',
+  'WHISPER_MODEL_NETWORK_ERROR',
+  'WHISPER_MODEL_HTTP_ERROR',
+  'WHISPER_MODEL_RANGE_MISMATCH',
+  'WHISPER_MODEL_STREAM_ERROR',
+  'WHISPER_MODEL_FILESYSTEM_ERROR',
+  'WHISPER_MODEL_BUSY',
+])
+export type WhisperModelErrorCode = z.infer<typeof WhisperModelErrorCodeSchema>
 export const WhisperModelErrorSchema = z.object({
-  code: z.string().regex(/^WHISPER_MODEL_[A-Z_]+$/),
-  message: z.string(),
+  code: WhisperModelErrorCodeSchema,
+  message: z.string().trim().min(1).max(200),
 }).strict()
 export const WhisperModelStatusSchema = z.object({
   modelId: WhisperModelIdSchema,

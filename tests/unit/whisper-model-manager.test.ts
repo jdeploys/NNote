@@ -1,6 +1,10 @@
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rename as renameFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  NodeWhisperModelStorage,
   WhisperModelManager,
   WhisperModelError,
   type WhisperModelStorage,
@@ -8,6 +12,7 @@ import {
 import { WHISPER_MODELS } from '../../src/main/localModels/whisperModelManifest'
 import { registerSettingsHandlers } from '../../src/main/ipc/registerSettingsHandlers'
 import type { DesktopApi } from '../../src/shared/contracts/desktopApi'
+import { WhisperModelStatusSchema } from '../../src/shared/contracts/settings'
 
 type Entry = { kind: 'regular' | 'symlink' | 'other'; size: number; digest: string }
 
@@ -103,6 +108,24 @@ describe('WhisperModelManager', () => {
     await expect(manager.download('base')).rejects.toMatchObject({ code })
     expect(storage.removed).toContain(partialPath)
     await expect(manager.status('base')).resolves.toMatchObject({ state: 'not_installed' })
+  })
+
+  it.each([
+    ['unsupported HTTP response', 503, null],
+    ['inconsistent range response', 206, 'bytes 99-147951464/147951465'],
+  ] as const)('cancels the body for an %s', async (_label, status, contentRange) => {
+    const context = setup()
+    const cancel = vi.fn().mockRejectedValue(new Error('cancel transport detail'))
+    if (status === 206) context.storage.entries.set(context.partialPath, { kind: 'regular', size: 100, digest: '' })
+    context.fetch.mockResolvedValue({
+      ok: false,
+      status,
+      headers: new Headers(contentRange === null ? {} : { 'content-range': contentRange }),
+      body: { cancel },
+    } as unknown as Response)
+
+    await expect(context.manager.download('base')).rejects.toBeInstanceOf(WhisperModelError)
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 
   it('cancels the response stream as soon as it exceeds the pinned size', async () => {
@@ -322,5 +345,143 @@ describe('Whisper model settings IPC and preload', () => {
 
     invoke.mockResolvedValueOnce([{ modelId: 'base', state: 'installed', expectedBytes: 1, receivedBytes: 1, localPath: 'secret' }])
     await expect(exposed.settings.listWhisperModels()).rejects.toThrow()
+    invoke.mockResolvedValueOnce([{
+      modelId: 'base', state: 'corrupt', expectedBytes: WHISPER_MODELS.base.size,
+      receivedBytes: 0, error: { code: 'WHISPER_MODEL_UNKNOWN', message: 'Unsafe detail' },
+    }])
+    await expect(exposed.settings.listWhisperModels()).rejects.toThrow()
+    expect(WhisperModelStatusSchema.safeParse({
+      modelId: 'base', state: 'corrupt', expectedBytes: WHISPER_MODELS.base.size,
+      receivedBytes: 0, error: { code: 'WHISPER_MODEL_INVALID_FILE', message: '' },
+    }).success).toBe(false)
+  })
+})
+
+describe('NodeWhisperModelStorage secure file handles', () => {
+  const roots: string[] = []
+  afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
+
+  async function temporaryRoot() {
+    const parent = await mkdtemp(join(tmpdir(), 'nnote-whisper-storage-'))
+    roots.push(parent)
+    const root = join(parent, 'owned')
+    const storage = new NodeWhisperModelStorage()
+    await storage.ensureRoot(root)
+    return { parent, root, storage }
+  }
+
+  async function* bytes(value: string) { yield Buffer.from(value) }
+
+  it('hashes an owned regular file through its verified open handle', async () => {
+    const { root, storage } = await temporaryRoot()
+    const path = join(root, 'ggml-base.bin')
+    await writeFile(path, 'owned bytes')
+
+    await expect(storage.hash(path)).resolves.toBe(
+      createHash('sha256').update('owned bytes').digest('hex'),
+    )
+  })
+
+  it('rejects a final symlink at open time without reading its target', async () => {
+    const { parent, root, storage } = await temporaryRoot()
+    const target = join(parent, 'outside-secret')
+    const link = join(root, 'ggml-base.bin')
+    await writeFile(target, 'do not read')
+    await symlink(target, link, 'file')
+
+    await expect(storage.hash(link)).rejects.toMatchObject({ code: 'WHISPER_MODEL_INVALID_FILE' })
+    await expect(readFile(target, 'utf8')).resolves.toBe('do not read')
+  })
+
+  it('replaces a truncate symlink safely and never changes its target', async () => {
+    const { parent, root, storage } = await temporaryRoot()
+    const target = join(parent, 'outside-target')
+    const partial = join(root, 'ggml-base.bin.partial')
+    await writeFile(target, 'untouched')
+    await symlink(target, partial, 'file')
+
+    await storage.write(partial, bytes('new partial'), 'truncate', 100, () => undefined)
+
+    await expect(readFile(target, 'utf8')).resolves.toBe('untouched')
+    await expect(readFile(partial, 'utf8')).resolves.toBe('new partial')
+  })
+
+  it('rejects an append symlink without changing its target', async () => {
+    const { parent, root, storage } = await temporaryRoot()
+    const target = join(parent, 'outside-target')
+    const partial = join(root, 'ggml-base.bin.partial')
+    await writeFile(target, 'untouched')
+    await symlink(target, partial, 'file')
+
+    await expect(storage.write(partial, bytes('bad'), 'append', 100, () => undefined))
+      .rejects.toMatchObject({ code: 'WHISPER_MODEL_INVALID_FILE' })
+    await expect(readFile(target, 'utf8')).resolves.toBe('untouched')
+  })
+
+  it('rejects a regular-file-to-symlink swap between inspection and open', async () => {
+    const { parent, root } = await temporaryRoot()
+    const target = join(parent, 'outside-target')
+    const partial = join(root, 'ggml-base.bin.partial')
+    const displaced = join(root, 'displaced-partial')
+    await writeFile(target, 'untouched')
+    await writeFile(partial, 'safe')
+    const storage = new NodeWhisperModelStorage({
+      beforeOpen: async (path, operation) => {
+        if (path === partial && operation === 'append') {
+          await renameFile(partial, displaced)
+          await symlink(target, partial, 'file')
+        }
+      },
+    })
+    await storage.ensureRoot(root)
+    await storage.inspect(partial)
+
+    await expect(storage.write(partial, bytes('bad'), 'append', 100, () => undefined))
+      .rejects.toMatchObject({ code: 'WHISPER_MODEL_INVALID_FILE' })
+    await expect(readFile(target, 'utf8')).resolves.toBe('untouched')
+  })
+
+  it('rejects a final-file-to-symlink swap before the hash handle opens', async () => {
+    const { parent, root } = await temporaryRoot()
+    const target = join(parent, 'outside-secret')
+    const finalPath = join(root, 'ggml-base.bin')
+    const displaced = join(root, 'displaced-final')
+    await writeFile(target, 'do not hash')
+    await writeFile(finalPath, 'safe')
+    const storage = new NodeWhisperModelStorage({
+      beforeOpen: async (path, operation) => {
+        if (path === finalPath && operation === 'hash') {
+          await renameFile(finalPath, displaced)
+          await symlink(target, finalPath, 'file')
+        }
+      },
+    })
+    await storage.ensureRoot(root)
+    await storage.inspect(finalPath)
+
+    await expect(storage.hash(finalPath)).rejects.toMatchObject({ code: 'WHISPER_MODEL_INVALID_FILE' })
+    await expect(readFile(target, 'utf8')).resolves.toBe('do not hash')
+  })
+
+  it('revalidates the owned root identity after opening a file', async () => {
+    const { parent, root } = await temporaryRoot()
+    const outside = join(parent, 'outside-root')
+    const displacedRoot = join(parent, 'displaced-root')
+    const finalPath = join(root, 'ggml-base.bin')
+    await writeFile(finalPath, 'safe')
+    await mkdir(outside)
+    await writeFile(join(outside, 'ggml-base.bin'), 'outside secret')
+    const storage = new NodeWhisperModelStorage({
+      beforeOpen: async (_path, operation) => {
+        if (operation === 'hash') {
+          await renameFile(root, displacedRoot)
+          await symlink(outside, root, process.platform === 'win32' ? 'junction' : 'dir')
+        }
+      },
+    })
+    await storage.ensureRoot(root)
+
+    await expect(storage.hash(finalPath)).rejects.toMatchObject({ code: 'WHISPER_MODEL_INVALID_FILE' })
+    await expect(readFile(join(outside, 'ggml-base.bin'), 'utf8')).resolves.toBe('outside secret')
   })
 })

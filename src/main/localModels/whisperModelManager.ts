@@ -1,26 +1,14 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
-import { lstat, mkdir, realpath, rename, rm } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
-import { finished } from 'node:stream/promises'
+import { constants as fsConstants } from 'node:fs'
+import { lstat, mkdir, open, realpath, rename, rm, type FileHandle } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
 import type {
+  WhisperModelErrorCode,
   WhisperModelId,
   WhisperModelProgress,
   WhisperModelStatus,
 } from '../../shared/contracts/settings'
 import { WHISPER_MODELS } from './whisperModelManifest'
-
-export type WhisperModelErrorCode =
-  | 'WHISPER_MODEL_DIGEST_MISMATCH'
-  | 'WHISPER_MODEL_SIZE_MISMATCH'
-  | 'WHISPER_MODEL_INVALID_FILE'
-  | 'WHISPER_MODEL_NOT_INSTALLED'
-  | 'WHISPER_MODEL_NETWORK_ERROR'
-  | 'WHISPER_MODEL_HTTP_ERROR'
-  | 'WHISPER_MODEL_RANGE_MISMATCH'
-  | 'WHISPER_MODEL_STREAM_ERROR'
-  | 'WHISPER_MODEL_FILESYSTEM_ERROR'
-  | 'WHISPER_MODEL_BUSY'
 
 const SAFE_MESSAGES: Record<WhisperModelErrorCode, string> = {
   WHISPER_MODEL_DIGEST_MISMATCH: 'Downloaded model verification failed.',
@@ -85,18 +73,61 @@ async function* responseChunks(body: unknown): AsyncGenerator<Uint8Array> {
   }
 }
 
-class NodeWhisperModelStorage implements WhisperModelStorage {
+async function cancelResponse(response: Response): Promise<void> {
+  const body = response.body as unknown as { cancel?: () => Promise<void> } | null
+  if (body?.cancel !== undefined) await body.cancel().catch(() => undefined)
+}
+
+type SecureFileOperation = 'hash' | 'append' | 'truncate'
+interface NodeWhisperModelStorageOptions {
+  beforeOpen?: (path: string, operation: SecureFileOperation) => Promise<void> | void
+}
+interface OwnedRoot {
+  path: string
+  dev: bigint
+  ino: bigint
+}
+
+function sameFileIdentity(
+  left: { dev: bigint; ino: bigint },
+  right: { dev: bigint; ino: bigint },
+): boolean {
+  // Windows reports dev=0 for path stats while FileHandle.stat() reports the volume ID.
+  const sameDevice = left.dev === right.dev || (process.platform === 'win32' && (left.dev === 0n || right.dev === 0n))
+  return sameDevice && left.ino === right.ino
+}
+
+export class NodeWhisperModelStorage implements WhisperModelStorage {
+  private ownedRoot: OwnedRoot | null = null
+
+  constructor(private readonly options: NodeWhisperModelStorageOptions = {}) {}
+
   async ensureRoot(root: string): Promise<string> {
     const requested = resolve(root)
     await mkdir(requested, { recursive: true })
-    const rootStat = await lstat(requested)
+    const rootStat = await lstat(requested, { bigint: true })
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
       throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
     }
-    return realpath(requested)
+    const canonical = await realpath(requested)
+    const canonicalStat = await lstat(canonical, { bigint: true })
+    if (!canonicalStat.isDirectory() || canonicalStat.isSymbolicLink()) {
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
+    if (this.ownedRoot === null) {
+      this.ownedRoot = { path: canonical, dev: canonicalStat.dev, ino: canonicalStat.ino }
+    } else if (
+      this.ownedRoot.path !== canonical
+      || this.ownedRoot.dev !== canonicalStat.dev
+      || this.ownedRoot.ino !== canonicalStat.ino
+    ) {
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
+    return canonical
   }
 
   async inspect(path: string): Promise<FileInspection> {
+    await this.assertOwnedPath(path)
     try {
       const info = await lstat(path)
       if (info.isSymbolicLink()) return { kind: 'symlink', size: info.size }
@@ -109,17 +140,40 @@ class NodeWhisperModelStorage implements WhisperModelStorage {
   }
 
   async hash(path: string): Promise<string> {
-    const hash = createHash('sha256')
-    for await (const chunk of createReadStream(path)) hash.update(chunk)
-    return hash.digest('hex')
+    const { handle } = await this.openVerified(path, fsConstants.O_RDONLY, 'hash')
+    try {
+      const hash = createHash('sha256')
+      const buffer = Buffer.allocUnsafe(1024 * 1024)
+      let position = 0
+      while (true) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, position)
+        if (bytesRead === 0) return hash.digest('hex')
+        hash.update(buffer.subarray(0, bytesRead))
+        position += bytesRead
+      }
+    } finally {
+      await handle.close()
+    }
   }
 
   async remove(path: string): Promise<void> {
+    await this.assertOwnedPath(path)
     await rm(path, { force: true })
   }
 
   async rename(from: string, to: string): Promise<void> {
+    await this.assertOwnedPath(from)
+    await this.assertOwnedPath(to)
+    const before = await lstat(from, { bigint: true })
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) {
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
     await rename(from, to)
+    const after = await lstat(to, { bigint: true })
+    if (!after.isFile() || after.isSymbolicLink() || !sameFileIdentity(after, before)) {
+      await rm(to, { force: true }).catch(() => undefined)
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
   }
 
   async write(
@@ -129,29 +183,100 @@ class NodeWhisperModelStorage implements WhisperModelStorage {
     maximumBytes: number,
     onBytes: (bytes: number) => void,
   ): Promise<number> {
-    await mkdir(dirname(path), { recursive: true })
-    const existing = mode === 'append' ? (await this.inspect(path)).size : 0
+    await this.assertOwnedPath(path)
+    let flags: number
+    if (mode === 'truncate') {
+      await rm(path, { force: true })
+      flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL
+    } else {
+      flags = fsConstants.O_WRONLY | fsConstants.O_APPEND
+    }
+    const { handle, size: existingSize } = await this.openVerified(path, flags, mode)
+    const existing = mode === 'append' ? existingSize : 0
     let received = existing
-    const output = createWriteStream(path, { flags: mode === 'append' ? 'a' : 'w' })
-    const completion = finished(output)
     try {
       for await (const chunk of body) {
         received += chunk.byteLength
         if (received > maximumBytes) {
           throw new WhisperModelError('WHISPER_MODEL_SIZE_MISMATCH')
         }
-        await new Promise<void>((accept, reject) => {
-          output.write(chunk, (error) => error ? reject(error) : accept())
-        })
+        let offset = 0
+        while (offset < chunk.byteLength) {
+          const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset)
+          if (bytesWritten === 0) throw new WhisperModelError('WHISPER_MODEL_STREAM_ERROR')
+          offset += bytesWritten
+        }
         onBytes(received)
       }
-      output.end()
-      await completion
+      await handle.sync()
       return received
+    } finally {
+      await handle.close()
+    }
+  }
+
+  private async openVerified(
+    path: string,
+    flags: number,
+    operation: SecureFileOperation,
+  ): Promise<{ handle: FileHandle; size: number }> {
+    await this.assertOwnedPath(path)
+    await this.options.beforeOpen?.(path, operation)
+    const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0
+    let handle: FileHandle
+    try {
+      handle = await open(path, flags | noFollow, 0o600)
+    } catch {
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
+    try {
+      const handleStat = await handle.stat({ bigint: true })
+      const pathStat = await lstat(path, { bigint: true })
+      if (
+        !handleStat.isFile()
+        || !pathStat.isFile()
+        || pathStat.isSymbolicLink()
+        || handleStat.nlink !== 1n
+        || pathStat.nlink !== 1n
+        || !sameFileIdentity(handleStat, pathStat)
+      ) {
+        throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+      }
+      const canonicalFile = await realpath(path)
+      await this.assertOwnedPath(canonicalFile)
+      await this.assertRootIdentity()
+      return { handle, size: Number(handleStat.size) }
     } catch (error) {
-      output.destroy()
-      await completion.catch(() => undefined)
-      throw error
+      await handle.close()
+      throw error instanceof WhisperModelError
+        ? error
+        : new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
+  }
+
+  private async assertOwnedPath(path: string): Promise<void> {
+    await this.assertRootIdentity()
+    const root = this.ownedRoot
+    if (root === null) throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    const candidate = resolve(path)
+    const fromRoot = relative(root.path, candidate)
+    if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) {
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    }
+  }
+
+  private async assertRootIdentity(): Promise<void> {
+    const root = this.ownedRoot
+    if (root === null) throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
+    const rootStat = await lstat(root.path, { bigint: true })
+    if (
+      !rootStat.isDirectory()
+      || rootStat.isSymbolicLink()
+      || rootStat.dev !== root.dev
+      || rootStat.ino !== root.ino
+      || await realpath(root.path) !== root.path
+    ) {
+      throw new WhisperModelError('WHISPER_MODEL_INVALID_FILE')
     }
   }
 }
@@ -284,6 +409,7 @@ export class WhisperModelManager {
     let mode: 'append' | 'truncate'
     if (start === 0) {
       if (!response.ok || response.status === 206) {
+        await cancelResponse(response)
         await this.storage.remove(partialPath)
         throw new WhisperModelError('WHISPER_MODEL_HTTP_ERROR')
       }
@@ -293,6 +419,7 @@ export class WhisperModelManager {
     } else if (response.status === 206 && this.validRange(response.headers.get('content-range'), start, model.size)) {
       mode = 'append'
     } else {
+      await cancelResponse(response)
       await this.storage.remove(partialPath)
       throw new WhisperModelError('WHISPER_MODEL_RANGE_MISMATCH')
     }
