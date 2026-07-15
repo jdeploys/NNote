@@ -31,6 +31,7 @@
 - Modify: `src/shared/contracts/settings.ts`
 - Modify: `src/main/db/migrations.ts`
 - Modify: `src/main/ipc/registerSettingsHandlers.ts`
+- Modify: `src/main/index.ts`
 - Modify: `src/preload/index.ts`
 - Test: `tests/unit/api-key-settings.test.tsx`
 - Test: `tests/integration/migration-v2.test.ts`
@@ -101,6 +102,8 @@ export class ProcessingSettingsRepository {
 ```
 
 Validate every IPC input with the shared schema and parse every preload response before returning it to the renderer.
+
+Construct `ProcessingSettingsRepository` from the existing application database in `src/main/index.ts` and pass it as a required dependency to `registerSettingsHandlers`. Do not make the repository optional and do not add a second settings construction path.
 
 - [ ] **Step 4: Run paired unchanged/changed tests and commit**
 
