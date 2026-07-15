@@ -4,11 +4,6 @@ import { spawnSync } from 'node:child_process'
 import { writeRuntimeManifest } from './write-local-runtime-manifest.mjs'
 import { signAsync } from '@electron/osx-sign'
 
-const LOCAL_RUNTIME_SIGN_IGNORE = [
-  String.raw`/Contents/Resources/local-runtime/darwin-(?:x64|arm64)/whisper-cli$`,
-  String.raw`/Contents/Resources/local-runtime/darwin-(?:x64|arm64)/ffmpeg$`,
-]
-
 function runCodesign(run, identity, helper, keychainFile) {
   const signingOptions = identity === '-' ? [] : ['--options', 'runtime', '--timestamp']
   const keychainOptions = keychainFile ? ['--keychain', keychainFile] : []
@@ -52,6 +47,10 @@ export function createAfterPackHook(dependencies = {}) {
       throw new Error('Nested helper signing failed: target')
     }
     const targetRoot = join(root, targets[0].name)
+    const helperPaths = new Set([
+      join(targetRoot, 'whisper-cli'),
+      join(targetRoot, 'ffmpeg'),
+    ])
     const identity = resolveIdentity()
     if (typeof identity !== 'string' || identity.trim() === '') {
       throw new Error('Nested helper signing failed: identity')
@@ -70,7 +69,7 @@ export function createAfterPackHook(dependencies = {}) {
         app,
         identity: '-',
         identityValidation: false,
-        ignore: LOCAL_RUNTIME_SIGN_IGNORE,
+        ignore: (file) => helperPaths.has(file),
         preAutoEntitlements: false,
         preEmbedProvisioningProfile: false,
       })

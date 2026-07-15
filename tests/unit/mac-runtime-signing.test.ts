@@ -113,11 +113,12 @@ describe('macOS local runtime signing order', () => {
       app: join(target.appOutDir, 'Nnote.app'),
       identity: '-',
       identityValidation: false,
-      ignore: expect.arrayContaining([
-        expect.stringContaining('whisper-cli'),
-        expect.stringContaining('ffmpeg'),
-      ]),
+      ignore: expect.any(Function),
     }))
+    const ignore = signApplication.mock.calls[0][0].ignore as (path: string) => boolean
+    expect(ignore(join(target.runtime, 'whisper-cli'))).toBe(true)
+    expect(ignore(join(target.runtime, 'ffmpeg'))).toBe(true)
+    expect(ignore(join(target.appOutDir, 'Nnote.app', 'Contents', 'Frameworks', 'Electron Framework.framework'))).toBe(false)
   })
 
   it('refuses to replace a linked packaged manifest', async (testContext) => {
