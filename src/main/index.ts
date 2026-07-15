@@ -26,6 +26,17 @@ import { reconcileImportJournals } from './archive/importMeeting'
 import { bootstrapAfterImportRecovery } from './app/archiveStartup'
 import { parsePackageVerificationRequest } from './app/packageVerification'
 import { runPackageRuntimeVerification } from './app/runtimePackageVerification'
+import { ProcessingSettingsRepository } from './settings/processingSettingsRepository'
+import { OpenAiTranscriptionAdapter } from './ai/providers/openAiTranscriptionAdapter'
+import { OpenAiSummaryAdapter } from './ai/providers/openAiSummaryAdapter'
+import { ProviderRegistry } from './ai/providers/providerRegistry'
+import { CodexCliSummaryAdapter } from './ai/providers/codexCliSummaryAdapter'
+import { createCodexCommandResolver } from './ai/providers/codexCommandResolver'
+import { runOwnedProcess } from './process/runOwnedProcess'
+import { WhisperModelManager } from './localModels/whisperModelManager'
+import { publishWhisperProgressToLiveWindows } from './window/publishWhisperProgress'
+import { LocalWhisperTranscriptionAdapter } from './ai/providers/localWhisperTranscriptionAdapter'
+import { resolveLocalRuntimePaths } from './localRuntime/runtimePaths'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
@@ -47,7 +58,44 @@ if (verificationRequest !== null) {
       start: () => {
         const meetings = new MeetingRepository(database)
         const credentialStore = new KeyringCredentialStore()
-        registerSettingsHandlers(ipcMain, credentialStore, new OpenAiKeyValidator())
+        const processingSettings = new ProcessingSettingsRepository(database)
+        const whisperModels = new WhisperModelManager(join(userDataDirectory, 'models', 'whisper'))
+        const registry = new ProviderRegistry(
+          [
+            new OpenAiTranscriptionAdapter(new OpenAiGateway(credentialStore)),
+            new LocalWhisperTranscriptionAdapter({
+              resolveRuntimePaths: () => resolveLocalRuntimePaths({
+                isPackaged: app.isPackaged,
+                resourcesPath: process.resourcesPath,
+                platform: process.platform,
+                arch: process.arch,
+                developmentRuntimeDirectory: process.env.NNOTE_LOCAL_RUNTIME_DIR,
+              }),
+              verifiedModelPath: (model) => whisperModels.verifiedPath(model),
+              resolveModel: () => processingSettings.get().localWhisperModel,
+              recordingsRoot: recordingsDirectory,
+              temporaryRoot: app.getPath('temp'),
+              runProcess: runOwnedProcess,
+            }),
+          ],
+          [
+            new OpenAiSummaryAdapter(new OpenAiSummaryGateway(credentialStore)),
+            new CodexCliSummaryAdapter(
+              runOwnedProcess,
+              app.getPath('temp'),
+              createCodexCommandResolver(),
+            ),
+          ],
+        )
+        registerSettingsHandlers(
+          ipcMain,
+          credentialStore,
+          new OpenAiKeyValidator(),
+          processingSettings,
+          registry,
+          whisperModels,
+          (progress) => publishWhisperProgressToLiveWindows(BrowserWindow.getAllWindows(), progress),
+        )
         const recordingService = new RecordingService(meetings, recordingsDirectory)
         const templateRepository = new TemplateRepository(database)
         const templateService = new TemplateService(templateRepository)
@@ -61,8 +109,16 @@ if (verificationRequest !== null) {
         )
         const processingService = new ProcessingService(
           meetings,
-          new TranscriptionService(meetings, new OpenAiGateway(credentialStore), recordingsDirectory),
-          new SummaryService(meetings, templateService, new OpenAiSummaryGateway(credentialStore)),
+          new TranscriptionService(
+            meetings,
+            () => registry.transcription(processingSettings.get().transcriptionProvider),
+            recordingsDirectory,
+          ),
+          new SummaryService(
+            meetings,
+            templateService,
+            () => registry.summary(processingSettings.get().summaryProvider),
+          ),
           recordingsDirectory,
         )
         registerProcessingHandlers(ipcMain, processingService)

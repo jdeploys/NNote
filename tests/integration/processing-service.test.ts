@@ -307,7 +307,7 @@ describe('ProcessingService', () => {
     h.transcribe.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(h.meetings.completeTranscription('meeting-1', [], [])) }))
     const first = h.service.process('meeting-1')
     const competingGateway = { transcribe: vi.fn() }
-    const direct = new TranscriptionService(h.meetings, competingGateway, join(h.first, '..'))
+    const direct = new TranscriptionService(h.meetings, () => competingGateway, join(h.first, '..'))
     await expect(direct.transcribeMeeting('meeting-1')).rejects.toThrow(/already running/i)
     expect(competingGateway.transcribe).not.toHaveBeenCalled()
     release()

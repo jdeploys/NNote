@@ -39,7 +39,7 @@ try {
   if (!existsSync(resultPath)) fail('runtime-result', `exit ${run.status}; ${run.stderr.trim()}`)
   const result = await readRuntimeResult(resultPath)
   if (!result.ok) fail('runtime', result.error)
-  for (const component of ['main', 'sqlite', 'keyring', 'preload', 'renderer']) {
+  for (const component of ['main', 'sqlite', 'keyring', 'localRuntime', 'preload', 'renderer']) {
     if (result.signals?.[component] !== true) fail(component)
   }
   if (run.status !== 0) fail('exit', String(run.status))

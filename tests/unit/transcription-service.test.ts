@@ -10,6 +10,10 @@ import type { CredentialStore } from '../../src/main/credentials/credentialStore
 import { OpenAiGateway, type OpenAiTranscriptionClient } from '../../src/main/ai/openAiGateway'
 import { OpenAiError, toOpenAiError } from '../../src/main/ai/openAiErrors'
 import { TranscriptionService } from '../../src/main/ai/transcriptionService'
+import { OpenAiTranscriptionAdapter } from '../../src/main/ai/providers/openAiTranscriptionAdapter'
+import { LocalWhisperTranscriptionAdapter } from '../../src/main/ai/providers/localWhisperTranscriptionAdapter'
+import { ProviderRegistry } from '../../src/main/ai/providers/providerRegistry'
+import { safeProviderError, toProviderError } from '../../src/main/ai/providers/providerErrors'
 import { completedPartPath } from '../../src/main/recording/recordingPaths'
 import type { Meeting } from '../../src/shared/contracts/meeting'
 
@@ -44,6 +48,58 @@ afterEach(() => {
 })
 
 describe('OpenAiGateway', () => {
+  it('adapts the neutral request and speaker labels without leaking gateway request details', async () => {
+    const gateway = {
+      transcribe: vi.fn(async () => ({
+        durationSeconds: 1,
+        segments: [{ speaker: 'A', startSeconds: 0, endSeconds: 1, text: 'Hello' }],
+      })),
+    }
+    const adapter = new OpenAiTranscriptionAdapter(gateway)
+
+    await expect(adapter.transcribe({ filePath: 'meeting.webm', recordingDurationSeconds: 99 })).resolves.toEqual({
+      durationSeconds: 1,
+      segments: [{ speakerLabel: 'A', startSeconds: 0, endSeconds: 1, text: 'Hello' }],
+    })
+    expect(gateway.transcribe).toHaveBeenCalledWith({
+      filePath: 'meeting.webm',
+      model: 'gpt-4o-transcribe-diarize',
+      responseFormat: 'diarized_json',
+      chunkingStrategy: 'auto',
+    })
+  })
+
+  it('selecting OpenAI from the Registry never invokes a packaged process runner', async () => {
+    const runOwnedProcess = vi.fn()
+    const gateway = { transcribe: vi.fn(async () => ({ durationSeconds: 1, segments: [] })) }
+    const openAi = new OpenAiTranscriptionAdapter(gateway)
+    const localWhisper = new LocalWhisperTranscriptionAdapter({
+      resolveRuntimePaths: async () => ({ whisperPath: 'whisper-cli', ffmpegPath: 'ffmpeg' }),
+      verifiedModelPath: async () => 'ggml-base.bin',
+      resolveModel: () => 'base',
+      recordingsRoot: 'recordings',
+      temporaryRoot: 'temporary',
+      runProcess: runOwnedProcess,
+    })
+    const registry = new ProviderRegistry([openAi, localWhisper], [])
+
+    await registry.transcription('openai').transcribe({ filePath: 'meeting.webm', recordingDurationSeconds: 1 })
+
+    expect(gateway.transcribe).toHaveBeenCalledOnce()
+    expect(runOwnedProcess).not.toHaveBeenCalled()
+  })
+
+  it('maps a raw OpenAI gateway failure through the adapter without leaking its canary', async () => {
+    const adapter = new OpenAiTranscriptionAdapter({
+      transcribe: vi.fn(async () => { throw Object.assign(new Error('adapter canary secret'), { status: 401 }) }),
+    })
+
+    const failure = await adapter.transcribe({ filePath: 'meeting.webm' }).catch((error: unknown) => error)
+
+    expect(failure).toMatchObject({ code: 'OPENAI_UNAUTHORIZED', message: 'OpenAI rejected the API key.', retryable: false })
+    expect(String(failure)).not.toContain('adapter canary secret')
+  })
+
   it('uses the exact SDK request shape and retrieves the credential for every call', async () => {
     const root = mkdtempSync(join(tmpdir(), 'nnote-gateway-'))
     directories.push(root)
@@ -203,8 +259,8 @@ describe('TranscriptionService', () => {
     writeFileSync(completedPartPath(h.recordingsDirectory, 'meeting-1', 0), Buffer.from([1]))
     const begin = vi.spyOn(h.meetings, 'beginTranscription').mockImplementationOnce(() => { throw new Error('forced transition failure') })
     const gateway = { transcribe: vi.fn(async () => ({ durationSeconds: 1, segments: [] })) }
-    const service = new TranscriptionService(h.meetings, gateway, h.recordingsDirectory)
-    await expect(service.transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_UNKNOWN' })
+    const service = new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory)
+    await expect(service.transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'TRANSCRIPTION_PROVIDER_UNKNOWN' })
     expect(gateway.transcribe).not.toHaveBeenCalled()
     expect(h.meetings.latestProcessingAttempt('meeting-1')).toMatchObject({ succeeded: false, finishedAt: expect.any(String) })
     begin.mockRestore()
@@ -221,25 +277,26 @@ describe('TranscriptionService', () => {
       { partIndex: 0, relativePath: basename(first), byteCount: 3, durationMs: 6_000 },
       { partIndex: 1, relativePath: basename(second), byteCount: 3, durationMs: 12_000 },
     ])
-    const requests: Array<{ filePath: string; model: string; responseFormat: string; chunkingStrategy: string }> = []
+    const requests: Array<{ filePath: string; recordingDurationSeconds?: number }> = []
     const gateway = {
       async transcribe(request: (typeof requests)[number]) {
         requests.push(request)
         return requests.length === 1
-          ? { durationSeconds: 5, segments: [{ speaker: 'A', startSeconds: 0, endSeconds: 2, text: 'Hello' }] }
-          : { durationSeconds: 7, segments: [{ speaker: 'A', startSeconds: 1, endSeconds: 3, text: 'Again' }] }
+          ? { durationSeconds: 5, segments: [{ speakerLabel: 'A', startSeconds: 0, endSeconds: 2, text: 'Hello' }] }
+          : { durationSeconds: 7, segments: [{ speakerLabel: 'A', startSeconds: 1, endSeconds: 3, text: 'Again' }] }
       },
     }
 
-    const result = await new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')
+    const resolveProvider = vi.fn(() => gateway)
+    const result = await new TranscriptionService(h.meetings, resolveProvider, h.recordingsDirectory).transcribeMeeting('meeting-1')
     const meetingPrefix = createHash('sha256').update('meeting-1').digest('hex')
 
     expect(requests.map(({ filePath }) => filePath)).toEqual([await realpath(first), await realpath(second)])
-    expect(requests[0]).toMatchObject({
-      model: 'gpt-4o-transcribe-diarize',
-      responseFormat: 'diarized_json',
-      chunkingStrategy: 'auto',
-    })
+    expect(resolveProvider).toHaveBeenCalledTimes(1)
+    expect(requests).toEqual([
+      { filePath: await realpath(first), recordingDurationSeconds: 6 },
+      { filePath: await realpath(second), recordingDurationSeconds: 6 },
+    ])
     expect(result.speakers).toEqual([
       { id: `${meetingPrefix}:0:A`, meetingId: 'meeting-1', displayName: 'Speaker A' },
       { id: `${meetingPrefix}:1:A`, meetingId: 'meeting-1', displayName: 'Speaker A' },
@@ -263,13 +320,13 @@ describe('TranscriptionService', () => {
     const gateway = {
       async transcribe() {
         return { durationSeconds: 3, segments: [
-          { speaker: 'A', startSeconds: 2, endSeconds: 3, text: 'Later' },
-          { speaker: 'A', startSeconds: 1, endSeconds: 2, text: 'Earlier' },
+          { speakerLabel: 'A', startSeconds: 2, endSeconds: 3, text: 'Later' },
+          { speakerLabel: 'A', startSeconds: 1, endSeconds: 2, text: 'Earlier' },
         ] }
       },
     }
 
-    await expect(new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_MALFORMED_RESPONSE' })
+    await expect(new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'TRANSCRIPTION_MALFORMED_RESPONSE' })
 
     expect(h.meetings.listTranscript('meeting-1')).toEqual([{ id: 'old:0', meetingId: 'meeting-1', speakerId: 'old', startMs: 0, endMs: 10, text: 'Keep me' }])
     expect(h.meetings.requireById('meeting-1').status).toBe('failed')
@@ -283,9 +340,9 @@ describe('TranscriptionService', () => {
     h.database.prepare('INSERT INTO summary_sections (id, meeting_id, kind, content_json, order_index) VALUES (?, ?, ?, ?, ?)').run('summary-1', 'meeting-1', 'paragraph', JSON.stringify({ text: 'Existing summary' }), 0)
     h.database.prepare('INSERT INTO speakers (id, meeting_id, display_name) VALUES (?, ?, ?)').run('old', 'meeting-1', 'Old')
     h.meetings.replaceTranscript('meeting-1', [{ id: 'old:0', meetingId: 'meeting-1', speakerId: 'old', startMs: 0, endMs: 10, text: 'Existing transcript' }])
-    const gateway = { async transcribe() { throw Object.assign(new Error(`provider canary 991 Authorization: Bearer sk-live-secret failed at ${part}`), { status: 429 }) } }
+    const gateway = { async transcribe() { throw safeProviderError('OPENAI_RATE_LIMITED', 'OpenAI rate limit was reached. Try again later.', true) } }
 
-    await expect(new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
+    await expect(new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
 
     expect(h.meetings.requireById('meeting-1')).toMatchObject({ status: 'failed', audioPath: basename(completedPartPath(h.recordingsDirectory, 'meeting-1', 0)), audioByteCount: 6 })
     expect(h.meetings.listTranscript('meeting-1')[0]?.text).toBe('Existing transcript')
@@ -307,7 +364,7 @@ describe('TranscriptionService', () => {
     vi.setSystemTime(new Date('2026-07-14T12:00:00.000Z'))
     const h = harness()
     writeFileSync(completedPartPath(h.recordingsDirectory, 'meeting-1', 0), Buffer.from([1]))
-    const service = new TranscriptionService(h.meetings, { async transcribe() { throw Object.assign(new Error('busy'), { status: 429 }) } }, h.recordingsDirectory)
+    const service = new TranscriptionService(h.meetings, () => ({ async transcribe() { throw safeProviderError('OPENAI_RATE_LIMITED', 'OpenAI rate limit was reached. Try again later.', true) } }), h.recordingsDirectory)
 
     await expect(service.transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
     await expect(service.transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
@@ -320,11 +377,11 @@ describe('TranscriptionService', () => {
     const h = harness()
     rmSync(h.recordingsDirectory, { recursive: true })
 
-    await expect(new TranscriptionService(h.meetings, { async transcribe() { throw new Error('unreachable') } }, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_UNKNOWN' })
+    await expect(new TranscriptionService(h.meetings, () => ({ async transcribe() { throw new Error('unreachable') } }), h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'TRANSCRIPTION_PROVIDER_UNKNOWN' })
 
     const { sanitized_error: sanitizedError } = h.database.prepare('SELECT sanitized_error FROM processing_attempts WHERE meeting_id = ?').get('meeting-1') as { sanitized_error: string }
     expect(sanitizedError).not.toContain(h.recordingsDirectory)
-    expect(JSON.parse(sanitizedError)).toMatchObject({ message: 'OpenAI transcription failed.' })
+    expect(JSON.parse(sanitizedError)).toMatchObject({ message: 'Transcription provider failed.' })
     h.database.close()
   })
 
@@ -342,11 +399,11 @@ describe('TranscriptionService', () => {
       async transcribe() {
         return {
           durationSeconds: 1,
-          segments: [{ speaker: 'A', startSeconds: 0, endSeconds: 1, text: 'Same provider labels' }],
+          segments: [{ speakerLabel: 'A', startSeconds: 0, endSeconds: 1, text: 'Same provider labels' }],
         }
       },
     }
-    const service = new TranscriptionService(h.meetings, gateway, h.recordingsDirectory)
+    const service = new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory)
 
     const first = await service.transcribeMeeting('meeting-1')
     const second = await service.transcribeMeeting('meeting-2')
@@ -365,11 +422,11 @@ describe('TranscriptionService', () => {
       async transcribe() {
         return {
           durationSeconds: 1,
-          segments: [{ speaker: 'A', startSeconds: 0, endSeconds: 1, text: 'Transcript' }],
+          segments: [{ speakerLabel: 'A', startSeconds: 0, endSeconds: 1, text: 'Transcript' }],
         }
       },
     }
-    const service = new TranscriptionService(h.meetings, gateway, h.recordingsDirectory)
+    const service = new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory)
     const first = await service.transcribeMeeting('meeting-1')
     h.database.prepare("UPDATE meetings SET status = 'completed' WHERE id = ?").run('meeting-1')
     h.database.prepare('UPDATE speakers SET display_name = ? WHERE id = ?').run('홍길동', first.speakers[0]?.id)
@@ -399,10 +456,79 @@ describe('TranscriptionService', () => {
     }
     const gateway = { transcribe: vi.fn() }
 
-    await expect(new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({
-      code: 'OPENAI_INVALID_AUDIO',
+    await expect(new TranscriptionService(h.meetings, () => gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({
+      code: 'TRANSCRIPTION_INVALID_AUDIO',
     })
     expect(gateway.transcribe).not.toHaveBeenCalled()
+    h.database.close()
+  })
+
+  it('uses a provider-neutral fallback while preserving concrete OpenAI classifications', () => {
+    expect(toProviderError(new Error('local provider canary'))).toMatchObject({
+      code: 'TRANSCRIPTION_PROVIDER_UNKNOWN', message: 'Transcription provider failed.', retryable: false,
+    })
+    expect(toProviderError(safeProviderError('OPENAI_UNAUTHORIZED', 'OpenAI rejected the API key.', false)))
+      .toMatchObject({ code: 'OPENAI_UNAUTHORIZED', message: 'OpenAI rejected the API key.' })
+  })
+
+  it('stores null-speaker segments without creating a speaker and uses a deterministic segment ID', async () => {
+    const h = harness()
+    writeFileSync(completedPartPath(h.recordingsDirectory, 'meeting-1', 0), Buffer.from([1]))
+    const provider = {
+      async transcribe() {
+        return {
+          durationSeconds: 1,
+          segments: [{ speakerLabel: null, startSeconds: 0, endSeconds: 1, text: 'Unattributed' }],
+        }
+      },
+    }
+
+    const result = await new TranscriptionService(
+      h.meetings,
+      () => provider,
+      h.recordingsDirectory,
+    ).transcribeMeeting('meeting-1')
+    const meetingPrefix = createHash('sha256').update('meeting-1').digest('hex')
+
+    expect(result.speakers).toEqual([])
+    expect(result.segments).toEqual([{
+      id: `${meetingPrefix}:0:segment:0`,
+      meetingId: 'meeting-1',
+      speakerId: null,
+      startMs: 0,
+      endMs: 1_000,
+      text: 'Unattributed',
+    }])
+    h.database.close()
+  })
+
+  it('offsets local null-speaker parts by durable full-part durations including trailing silence', async () => {
+    const h = harness()
+    const first = completedPartPath(h.recordingsDirectory, 'meeting-1', 0)
+    const second = completedPartPath(h.recordingsDirectory, 'meeting-1', 1)
+    writeFileSync(first, Buffer.from([1]))
+    writeFileSync(second, Buffer.from([2]))
+    h.meetings.replaceRecordingParts('meeting-1', [
+      { partIndex: 0, relativePath: basename(first), byteCount: 1, durationMs: 4_000 },
+      { partIndex: 1, relativePath: basename(second), byteCount: 1, durationMs: 10_000 },
+    ])
+    const provider = {
+      async transcribe(request: { filePath: string; recordingDurationSeconds?: number }) {
+        return {
+          durationSeconds: request.recordingDurationSeconds!,
+          segments: [{ speakerLabel: null, startSeconds: 0, endSeconds: 1, text: basename(request.filePath) }],
+        }
+      },
+    }
+
+    const result = await new TranscriptionService(
+      h.meetings, () => provider, h.recordingsDirectory,
+    ).transcribeMeeting('meeting-1')
+
+    expect(result.segments.map(({ startMs, endMs }) => ({ startMs, endMs }))).toEqual([
+      { startMs: 0, endMs: 1_000 },
+      { startMs: 4_000, endMs: 5_000 },
+    ])
     h.database.close()
   })
 })

@@ -13,11 +13,46 @@ import {
 } from '../shared/contracts/meetingsApi'
 import { SpeakerSchema } from '../shared/contracts/meeting'
 import { ArchiveOperationResultSchema } from '../shared/contracts/archive'
+import {
+  ProcessingProviderSettingsSchema,
+  ProviderDescriptorSchema,
+  WhisperModelIdSchema,
+  WhisperModelProgressSchema,
+  WhisperModelStatusSchema,
+  type ProcessingProviderSettings,
+  type WhisperModelId,
+  type WhisperModelProgress,
+} from '../shared/contracts/settings'
 
 const settings: DesktopApi['settings'] = Object.freeze({
   saveApiKey: (value: string) => ipcRenderer.invoke('settings:save-api-key', value),
   getApiKeyStatus: () => ipcRenderer.invoke('settings:get-api-key-status'),
   deleteApiKey: () => ipcRenderer.invoke('settings:delete-api-key'),
+  getProcessingProviders: () => ipcRenderer.invoke('settings:get-processing-providers')
+    .then((value) => ProcessingProviderSettingsSchema.parse(value)),
+  updateProcessingProviders: (input: ProcessingProviderSettings) => ipcRenderer.invoke(
+    'settings:update-processing-providers',
+    ProcessingProviderSettingsSchema.parse(input),
+  ).then((value) => ProcessingProviderSettingsSchema.parse(value)),
+  listProcessingProviderDescriptors: () => ipcRenderer.invoke(
+    'settings:list-processing-provider-descriptors',
+  ).then((value) => ProviderDescriptorSchema.array().parse(value)),
+  listWhisperModels: () => ipcRenderer.invoke('settings:list-whisper-models')
+    .then((value) => WhisperModelStatusSchema.array().parse(value)),
+  downloadWhisperModel: async (modelId: WhisperModelId) => ipcRenderer.invoke(
+    'settings:download-whisper-model', WhisperModelIdSchema.parse(modelId),
+  ).then((value) => WhisperModelStatusSchema.parse(value)),
+  deleteWhisperModel: async (modelId: WhisperModelId) => ipcRenderer.invoke(
+    'settings:delete-whisper-model', WhisperModelIdSchema.parse(modelId),
+  ).then((value) => WhisperModelStatusSchema.parse(value)),
+  onWhisperModelProgress: (listener: (progress: WhisperModelProgress) => void) => {
+    const handler = (_event: unknown, value: unknown) => {
+      const parsed = WhisperModelProgressSchema.safeParse(value)
+      if (parsed.success) listener(parsed.data)
+    }
+    ipcRenderer.on('settings:whisper-model-progress', handler)
+    return () => { ipcRenderer.removeListener('settings:whisper-model-progress', handler) }
+  },
 })
 
 const recording: DesktopApi['recording'] = Object.freeze({

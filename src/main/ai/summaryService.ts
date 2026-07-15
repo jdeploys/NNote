@@ -1,14 +1,14 @@
 import type { MeetingRepository } from '../db/meetingRepository'
 import type { TemplateService } from '../templates/templateService'
-import type { OpenAiSummaryGatewayPort } from './openAiGateway'
-import { safeOpenAiError } from './openAiErrors'
+import type { SummaryProvider } from './providers/providerPorts'
+import { safeProviderError } from './providers/providerErrors'
 import { buildSummaryJsonSchema, createSummaryResponseSchema } from './summarySchema'
 
 export class SummaryService {
   constructor(
     private readonly meetings: MeetingRepository,
     private readonly templates: TemplateService,
-    private readonly gateway: OpenAiSummaryGatewayPort,
+    private readonly resolveProvider: () => Pick<SummaryProvider, 'summarize'>,
   ) {}
 
   async summarizeMeeting(meetingId: string) {
@@ -28,7 +28,8 @@ export class SummaryService {
       '전사:',
       ...transcript.map((segment) => `[${segment.speakerId ?? 'unknown'}] ${segment.text}`),
     ].join('\n')
-    const raw = await this.gateway.summarize({
+    const provider = this.resolveProvider()
+    const raw = await provider.summarize({
       input,
       schema: buildSummaryJsonSchema(template, knownSpeakerIds),
     })
@@ -36,10 +37,10 @@ export class SummaryService {
     try {
       json = JSON.parse(raw)
     } catch {
-      throw safeOpenAiError('OPENAI_MALFORMED_SUMMARY')
+      throw safeProviderError('SUMMARY_MALFORMED_RESPONSE', 'The summary provider returned an invalid response.', false)
     }
     const parsed = createSummaryResponseSchema(template, knownSpeakerIds).safeParse(json)
-    if (!parsed.success) throw safeOpenAiError('OPENAI_MALFORMED_SUMMARY')
+    if (!parsed.success) throw safeProviderError('SUMMARY_MALFORMED_RESPONSE', 'The summary provider returned an invalid response.', false)
     const sectionById = new Map(parsed.data.sections.map((section) => [section.sectionId, section]))
     return this.meetings.completeSummary(
       meetingId,

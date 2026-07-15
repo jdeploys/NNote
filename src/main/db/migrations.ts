@@ -90,6 +90,18 @@ const migration2 = `
   ALTER TABLE processing_attempts ADD COLUMN owner_id TEXT;
 `
 
+const migration3 = `
+  CREATE TABLE app_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+  );
+  INSERT OR IGNORE INTO app_settings(key, value_json) VALUES (
+    'processing_providers',
+    '{"transcriptionProvider":"openai","summaryProvider":"openai","localWhisperModel":"base"}'
+  );
+  PRAGMA user_version = 3;
+`
+
 const finishDuplicateAttempt = `
   UPDATE processing_attempts
   SET finished_at = ?, succeeded = 0, sanitized_error = ?
@@ -98,8 +110,8 @@ const finishDuplicateAttempt = `
 
 export function runMigrations(database: Database.Database): void {
   const version = database.pragma('user_version', { simple: true }) as number
-  if (version > 2) {
-    throw new Error(`Database version ${version} is newer than supported version 2`)
+  if (version > 3) {
+    throw new Error(`Database version ${version} is newer than supported version 3`)
   }
   if (version === 0) {
     database.exec('BEGIN IMMEDIATE')
@@ -145,6 +157,16 @@ export function runMigrations(database: Database.Database): void {
           ON processing_attempts(meeting_id) WHERE finished_at IS NULL;
         PRAGMA user_version = 2;
       `)
+      database.exec('COMMIT')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  }
+  if ((database.pragma('user_version', { simple: true }) as number) === 2) {
+    database.exec('BEGIN IMMEDIATE')
+    try {
+      database.exec(migration3)
       database.exec('COMMIT')
     } catch (error) {
       database.exec('ROLLBACK')

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OpenAiSummaryGateway } from '../../src/main/ai/openAiGateway'
 import { SummaryService } from '../../src/main/ai/summaryService'
+import { OpenAiSummaryAdapter } from '../../src/main/ai/providers/openAiSummaryAdapter'
 import { buildSummaryJsonSchema } from '../../src/main/ai/summarySchema'
 import { openDatabase } from '../../src/main/db/database'
 import { MeetingRepository } from '../../src/main/db/meetingRepository'
@@ -43,6 +44,29 @@ afterEach(() => {
 })
 
 describe('OpenAiSummaryGateway', () => {
+  it('preserves the gateway summary output through the neutral adapter', async () => {
+    const gateway = { summarize: vi.fn(async () => '{"sections":[]}') }
+    await expect(new OpenAiSummaryAdapter(gateway).summarize({ input: 'x', schema: {} }))
+      .resolves.toBe('{"sections":[]}')
+  })
+
+  it('maps a raw OpenAI gateway failure through the adapter without leaking its canary', async () => {
+    const adapter = new OpenAiSummaryAdapter({
+      summarize: vi.fn(async () => {
+        throw Object.assign(new Error('summary adapter canary secret'), { status: 401 })
+      }),
+    })
+
+    const failure = await adapter.summarize({ input: 'x', schema: {} }).catch((error: unknown) => error)
+
+    expect(failure).toMatchObject({
+      code: 'OPENAI_UNAUTHORIZED',
+      message: 'OpenAI rejected the API key.',
+      retryable: false,
+    })
+    expect(String(failure)).not.toContain('summary adapter canary secret')
+  })
+
   it('uses gpt-5-mini and the exact Responses API strict structured-output boundary', async () => {
     const create = vi.fn(async () => ({ status: 'completed', output_text: JSON.stringify({ sections: [], actionItems: [] }), output: [] }))
     const gateway = new OpenAiSummaryGateway(
@@ -123,7 +147,8 @@ describe('SummaryService', () => {
         actionItems: [{ content: 'Deploy', assigneeSpeakerId: '0:B', dueAt: null }],
       })),
     }
-    const service = new SummaryService(h.meetings, h.templates, gateway)
+    const resolveProvider = vi.fn(() => gateway)
+    const service = new SummaryService(h.meetings, h.templates, resolveProvider)
 
     await service.summarizeMeeting('meeting-1')
     expect(service.renderMeeting('meeting-1').actionItems[0]?.assigneeDisplayName).toBe('Speaker B')
@@ -134,6 +159,7 @@ describe('SummaryService', () => {
     expect(service.renderMeeting('meeting-1').actionItems[0]?.assigneeDisplayName).toBe('홍길동')
     expect(JSON.stringify(h.meetings.listTranscript('meeting-1'))).toBe(before)
     expect(gateway.summarize).toHaveBeenCalledTimes(1)
+    expect(resolveProvider).toHaveBeenCalledTimes(1)
     h.database.close()
   })
 
@@ -145,9 +171,13 @@ describe('SummaryService', () => {
     h.database.prepare('INSERT INTO summary_sections (id, meeting_id, template_section_id, kind, content_json, order_index) VALUES (?, ?, ?, ?, ?, ?)').run('old', 'meeting-1', h.template.sections[0]?.id, 'paragraph', JSON.stringify({ text: 'Old', items: [] }), 0)
     const beforeTranscript = JSON.stringify(h.meetings.listTranscript('meeting-1'))
     const beforeSummary = JSON.stringify(h.meetings.listSummarySections('meeting-1'))
-    const service = new SummaryService(h.meetings, h.templates, { summarize: vi.fn(async () => JSON.stringify(makeResponse(h))) })
+    const service = new SummaryService(h.meetings, h.templates, () => ({ summarize: vi.fn(async () => JSON.stringify(makeResponse(h))) }))
 
-    await expect(service.summarizeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_MALFORMED_SUMMARY' })
+    const failure = await service.summarizeMeeting('meeting-1').catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: 'SUMMARY_MALFORMED_RESPONSE',
+      message: 'The summary provider returned an invalid response.',
+    })
 
     expect(JSON.stringify(h.meetings.listTranscript('meeting-1'))).toBe(beforeTranscript)
     expect(JSON.stringify(h.meetings.listSummarySections('meeting-1'))).toBe(beforeSummary)
@@ -165,7 +195,7 @@ describe('SummaryService', () => {
         throw Object.assign(new Error('provider canary invalid summary request'), { status: 400 })
       }) } }),
     )
-    const service = new SummaryService(h.meetings, h.templates, gateway)
+    const service = new SummaryService(h.meetings, h.templates, () => gateway)
 
     await expect(service.summarizeMeeting('meeting-1')).rejects.toMatchObject({
       code: 'OPENAI_INVALID_SUMMARY_REQUEST',
@@ -181,7 +211,7 @@ describe('SummaryService', () => {
     const h = harness()
     h.meetings.renameSpeaker('meeting-1', '0:B', '홍길동')
     const summarize = vi.fn(async () => JSON.stringify({ sections: h.template.sections.map((section) => ({ sectionId: section.id, kind: section.kind, text: '', items: [] })), actionItems: [] }))
-    await new SummaryService(h.meetings, h.templates, { summarize }).summarizeMeeting('meeting-1')
+    await new SummaryService(h.meetings, h.templates, () => ({ summarize })).summarizeMeeting('meeting-1')
     const input = (summarize.mock.calls as unknown as Array<[{ input: string }]>)[0]![0].input
     expect(input).toContain('[0:B] I will.')
     expect(input).not.toContain('홍길동')
