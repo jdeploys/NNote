@@ -34,13 +34,14 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run test:e2e
+      - name: Build pinned Windows local runtime
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-local-runtime.ps1 -Arch x64
       - name: Package and verify Windows (unsigned)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:FFMPEG_BASH = 'C:\msys64\usr\bin\bash.exe'
-          $env:MSYSTEM = 'MINGW64'
-          ./scripts/build-local-runtime.ps1 -Arch x64
           npm run package:win:x64
           node scripts/verify-package.mjs dist/win-unpacked
       - name: Package and verify macOS (unsigned)

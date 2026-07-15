@@ -90,6 +90,16 @@ describe('release package configuration', () => {
     expect(release).toContain('bash ./scripts/build-local-runtime.sh "${{ matrix.arch }}"')
   })
 
+  it('builds the Windows FFmpeg runtime inside the MSYS2 shell while keeping packaging in its native step', () => {
+    const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
+    const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
+    for (const workflow of [ci, release]) {
+      expect(workflow).toContain('shell: msys2 {0}')
+      expect(workflow).toContain('powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-local-runtime.ps1 -Arch x64')
+      expect(workflow).toContain('npm run package:win:x64')
+    }
+  })
+
   it('pins actions, limits permissions, and keeps secrets in the mac package step', () => {
     const workflow = readFileSync(resolve('.github/workflows/release.yml'), 'utf8').replace(/\r\n/g, '\n')
     expect(workflow).toContain('permissions:\n  contents: read')

@@ -29,11 +29,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - name: Build pinned Windows local runtime
-        shell: pwsh
-        run: |
-          $env:FFMPEG_BASH = 'C:\msys64\usr\bin\bash.exe'
-          $env:MSYSTEM = 'MINGW64'
-          ./scripts/build-local-runtime.ps1 -Arch x64 *>&1 | Tee-Object runtime-build.log
+        shell: msys2 {0}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-local-runtime.ps1 -Arch x64 2>&1 | tee runtime-build.log
       - name: Package unsigned Windows x64
         run: npm run package:win:x64
         env:
