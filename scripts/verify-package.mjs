@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { readRuntimeResult } from './read-runtime-result.mjs'
 
 function fail(component, detail = '') {
   throw new Error(`Package verification failed: ${component}${detail ? ` (${detail})` : ''}`)
@@ -36,7 +37,7 @@ try {
   ], { encoding: 'utf8', timeout: 45_000, windowsHide: true })
   if (run.error) fail('launch', run.error.message)
   if (!existsSync(resultPath)) fail('runtime-result', `exit ${run.status}; ${run.stderr.trim()}`)
-  const result = JSON.parse(await readFile(resultPath, 'utf8'))
+  const result = await readRuntimeResult(resultPath)
   if (!result.ok) fail('runtime', result.error)
   for (const component of ['main', 'sqlite', 'keyring', 'preload', 'renderer']) {
     if (result.signals?.[component] !== true) fail(component)
