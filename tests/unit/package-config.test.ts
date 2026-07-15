@@ -100,6 +100,14 @@ describe('release package configuration', () => {
     }
   })
 
+  it('anchors the Windows release build log outside the temporary runtime tree', () => {
+    const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
+    const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
+    expect(release).toContain("$runtimeLog = Join-Path $PWD 'runtime-build.log'")
+    expect(release).toContain('Tee-Object -LiteralPath $runtimeLog')
+    expect(ci).not.toContain('Tee-Object -LiteralPath $runtimeLog')
+  })
+
   it('installs NASM with the Windows toolchain while preserving optimized FFmpeg assembly', () => {
     for (const name of ['ci.yml', 'release.yml']) {
       const workflow = readFileSync(resolve('.github/workflows', name), 'utf8')

@@ -31,7 +31,9 @@ jobs:
       - run: npm test
       - name: Build pinned Windows local runtime
         shell: pwsh
-        run: ./scripts/build-local-runtime.ps1 -Arch x64 -FfmpegShell msys2 *>&1 | Tee-Object runtime-build.log
+        run: |
+          $runtimeLog = Join-Path $PWD 'runtime-build.log'
+          ./scripts/build-local-runtime.ps1 -Arch x64 -FfmpegShell msys2 *>&1 | Tee-Object -LiteralPath $runtimeLog
       - name: Package unsigned Windows x64
         run: npm run package:win:x64
         env:
