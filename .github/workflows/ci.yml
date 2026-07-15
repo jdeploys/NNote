@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           native_arch="$(uname -m)"
-          ./scripts/build-local-runtime.sh "$native_arch"
+          bash ./scripts/build-local-runtime.sh "$native_arch"
           if [[ "$native_arch" == arm64 ]]; then
             CSC_NAME=- CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac:arm64 -- --config.mac.hardenedRuntime=false --config.mac.notarize=false
             node scripts/verify-package.mjs dist/mac-arm64/Nnote.app

@@ -98,7 +98,7 @@ jobs:
       - name: Build pinned macOS local runtime
         run: |
           set -euo pipefail
-          ./scripts/build-local-runtime.sh "${{ matrix.arch }}" 2>&1 | tee runtime-build.log
+          bash ./scripts/build-local-runtime.sh "${{ matrix.arch }}" 2>&1 | tee runtime-build.log
       - name: Package macOS ${{ matrix.arch }}
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}

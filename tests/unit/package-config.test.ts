@@ -83,6 +83,13 @@ describe('release package configuration', () => {
     expect(workflow).not.toContain('gh release create v0.0.1')
   })
 
+  it('invokes the macOS runtime builder through bash while preserving each workflow architecture argument', () => {
+    const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
+    const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
+    expect(ci).toContain('bash ./scripts/build-local-runtime.sh "$native_arch"')
+    expect(release).toContain('bash ./scripts/build-local-runtime.sh "${{ matrix.arch }}"')
+  })
+
   it('pins actions, limits permissions, and keeps secrets in the mac package step', () => {
     const workflow = readFileSync(resolve('.github/workflows/release.yml'), 'utf8').replace(/\r\n/g, '\n')
     expect(workflow).toContain('permissions:\n  contents: read')
