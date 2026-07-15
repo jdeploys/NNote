@@ -1,4 +1,4 @@
-# Nnote 0.1.0 릴리스 인수 매트릭스
+# Nnote 0.0.1 릴리스 인수 매트릭스
 
 작성일: 2026-07-15 (Asia/Seoul)
 
@@ -8,12 +8,12 @@
 
 | 대상 | 환경 | 결과 | 실제 신호 |
 |---|---|---:|---|
-| 단위·통합 테스트 | Windows 10.0.26200, Node 22.14.0, 로컬 | PASS | `npm test`: 39 files, 311 tests |
+| 단위·통합 테스트 | Windows 10.0.26200, Node 22.14.0, 로컬 | PASS | `npm test`: 40 files, 320 tests |
 | TypeScript / ESLint / build | Windows 10.0.26200, 로컬 | PASS | `npm run lint`, `npm run typecheck`, `npm run build`: exit 0 |
 | 실제 Electron E2E | Windows 10.0.26200, Electron 43.1.0, 로컬 | PASS | secure renderer, Chromium fake WAV 녹음 후 `recorded`, detail 처리/내보내기 및 dashboard 가져오기 동작 진입점; 1/1 |
-| Windows 시각 회귀 | Windows 10.0.26200, Chromium, 로컬 | PASS | dashboard 녹음 telemetry/일시정지/가져오기와 detail 처리/내보내기 포함 6/6 픽셀 비교 |
+| Windows 시각 회귀 | Windows 10.0.26200, Chromium, 로컬 | PASS | dashboard 상태와 detail 화면을 포함한 13/13 픽셀 비교 |
 | win-unpacked 런타임 | Windows 10.0.26200, 로컬 | PASS | `main/sqlite/keyring/preload/renderer` 모두 `true` |
-| Windows 설치 프로그램 | Windows 10.0.26200, 로컬 | PASS | `dist/Nnote Setup 0.1.0.exe` 생성; Authenticode `NotSigned` |
+| Windows 설치 프로그램 | Windows 10.0.26200, 로컬 | PASS | `dist/Nnote-0.0.1-win-x64.exe` 생성; Authenticode `NotSigned` |
 | 릴리스 내용 allowlist | Windows 10.0.26200, 로컬 | PASS | ASAR에 `out`, package metadata, SQLite/Keyring 최소 native runtime만 존재; source map/recording/db/archive/env/app tests/src 없음 |
 | macOS 패키지·런타임 | macOS CI/실기기 | PENDING | Windows 결과로 대체하지 않음 |
 | macOS 시각 기준선 | macOS CI | PENDING | 비교 실패 시 CI도 실패하며, 생성된 darwin 후보를 검토·커밋하기 전에는 통과하지 않음 |
@@ -44,4 +44,4 @@
 
 ## 서명 상태
 
-0.1.0 개발/CI 패키지는 unsigned입니다. Windows 인증서 또는 Apple Developer ID/notarization 자격 증명을 사용하지 않았으며, 서명·공증 완료를 주장하지 않습니다.
+0.0.1 개발/CI 패키지는 unsigned입니다. Windows 인증서 또는 Apple Developer ID/notarization 자격 증명을 사용하지 않았으며, 서명·공증 완료를 주장하지 않습니다.
