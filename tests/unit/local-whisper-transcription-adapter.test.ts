@@ -256,6 +256,15 @@ describe('pinned whisper.cpp output parser', () => {
     expect(() => parseWhisperOutput(whisperJson([{
       timestamps: { from: '00:00:00,000', to: '00:00:03,000' }, offsets: { from: 0, to: 3000 }, text: 'too long',
     }]), 2)).toThrow()
+    expect(() => parseWhisperOutput(whisperJson([{
+      timestamps: { from: '00:00:60,000', to: '00:01:00,001' }, offsets: { from: 60_000, to: 60_001 }, text: 'range',
+    }]), 120)).toThrow()
+    expect(() => parseWhisperOutput(whisperJson([{
+      timestamps: { from: '00:00:00,001', to: '00:00:00,002' }, offsets: { from: 0, to: 2 }, text: 'mismatch',
+    }]), 2)).toThrow()
+    expect(() => parseWhisperOutput(JSON.stringify({
+      result: { language: 'en' }, transcription: [],
+    }), 2)).toThrow()
   })
 })
 

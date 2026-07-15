@@ -1,7 +1,7 @@
 import type { NormalizedTranscription } from '../ai/providers/providerPorts'
 
 const MAX_SEGMENTS = 100_000
-const PINNED_TIMESTAMP = /^\d{2}:\d{2}:\d{2},\d{3}$/
+const PINNED_TIMESTAMP = /^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/
 
 interface PinnedWhisperOutput {
   result: { language: string }
@@ -16,6 +16,18 @@ function invalid(): never {
   throw new Error('Invalid pinned whisper.cpp output')
 }
 
+function timestampMilliseconds(value: string): number {
+  const match = PINNED_TIMESTAMP.exec(value)
+  if (match === null) return invalid()
+  const [, hoursValue, minutesValue, secondsValue, millisValue] = match
+  const hours = Number(hoursValue)
+  const minutes = Number(minutesValue)
+  const seconds = Number(secondsValue)
+  const millis = Number(millisValue)
+  if (minutes > 59 || seconds > 59) return invalid()
+  return ((hours * 60 + minutes) * 60 + seconds) * 1_000 + millis
+}
+
 export function parseWhisperOutput(json: string, durationSeconds: number): NormalizedTranscription {
   if (!Number.isFinite(durationSeconds) || durationSeconds < 0) return invalid()
   let value: unknown
@@ -24,7 +36,7 @@ export function parseWhisperOutput(json: string, durationSeconds: number): Norma
   const output = value as Partial<PinnedWhisperOutput>
   if (
     typeof output.result !== 'object' || output.result === null
-    || typeof output.result.language !== 'string'
+    || output.result.language !== 'ko'
     || !Array.isArray(output.transcription)
     || output.transcription.length > MAX_SEGMENTS
   ) return invalid()
@@ -35,14 +47,16 @@ export function parseWhisperOutput(json: string, durationSeconds: number): Norma
       typeof raw !== 'object' || raw === null
       || typeof raw.timestamps !== 'object' || raw.timestamps === null
       || typeof raw.timestamps.from !== 'string' || typeof raw.timestamps.to !== 'string'
-      || !PINNED_TIMESTAMP.test(raw.timestamps.from) || !PINNED_TIMESTAMP.test(raw.timestamps.to)
       || typeof raw.offsets !== 'object' || raw.offsets === null
     ) return invalid()
     const { from, to } = raw.offsets
+    const timestampFrom = timestampMilliseconds(raw.timestamps.from)
+    const timestampTo = timestampMilliseconds(raw.timestamps.to)
     const text = typeof raw.text === 'string' ? raw.text.trim() : ''
     if (
       !Number.isSafeInteger(from) || !Number.isSafeInteger(to)
-      || from < 0 || to < from || from < previousStart || to / 1_000 > durationSeconds + 0.001
+      || from < 0 || to < from || from !== timestampFrom || to !== timestampTo
+      || from < previousStart || to / 1_000 > durationSeconds + 0.001
       || text.length === 0
     ) return invalid()
     previousStart = from
