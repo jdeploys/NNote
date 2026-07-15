@@ -57,4 +57,29 @@ describe('release package configuration', () => {
     expect(workflow).toContain('--prerelease')
     expect(workflow).toContain('scripts/verify-package.mjs')
   })
+
+  it('packages only the matching platform runtime and never a downloaded model', () => {
+    expect(manifest.build).toMatchObject({
+      afterPack: 'scripts/after-pack.mjs',
+      afterSign: 'scripts/after-sign.mjs',
+    })
+    expect(manifest.build.win.extraResources).toContainEqual({
+      from: 'build/local-runtime/win32-${arch}',
+      to: 'local-runtime/win32-${arch}',
+    })
+    expect(manifest.build.mac.extraResources).toContainEqual({
+      from: 'build/local-runtime/darwin-${arch}',
+      to: 'local-runtime/darwin-${arch}',
+    })
+    expect(JSON.stringify(manifest.build)).not.toMatch(/ggml-(?:base|small)\.bin|models\/|models\\/)
+  })
+
+  it('builds and verifies each runtime before clobbering the existing prerelease assets', () => {
+    const workflow = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
+    expect(workflow).toContain('build-local-runtime.ps1')
+    expect(workflow).toContain('build-local-runtime.sh')
+    expect(workflow).toContain('"localRuntime":true')
+    expect(workflow).toContain('gh release upload v0.0.1 --clobber')
+    expect(workflow).not.toContain('gh release create v0.0.1')
+  })
 })

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 test.skip(
-  process.platform !== 'win32',
-  `Processing settings snapshots have reviewed Windows baselines only; ${process.platform} is skipped until native baselines are reviewed.`,
+  !['win32', 'darwin'].includes(process.platform),
+  `Processing settings snapshots are supported on Windows and macOS; ${process.platform} is unsupported.`,
 )
 
 async function open(page: Page, state: string, expanded: boolean) {
