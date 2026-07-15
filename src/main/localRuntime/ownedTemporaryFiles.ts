@@ -5,6 +5,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 interface Identity { dev: bigint; ino: bigint }
 
 export class OwnedTemporaryFileTooLargeError extends Error {}
+export class OwnedTemporaryFileInvalidError extends Error {}
 
 function sameIdentity(left: Identity, right: Identity): boolean {
   const sameDevice = left.dev === right.dev
@@ -37,11 +38,11 @@ export class OwnedTemporaryFiles {
   static async capture(requestedRoot: string): Promise<OwnedTemporaryFiles> {
     const requested = resolve(requestedRoot)
     const initial = await lstat(requested, { bigint: true })
-    if (!initial.isDirectory() || initial.isSymbolicLink()) throw new Error('Invalid temporary directory')
+    if (!initial.isDirectory() || initial.isSymbolicLink()) throw new OwnedTemporaryFileInvalidError('Invalid temporary directory')
     const canonical = await realpath(requested)
     const canonicalStat = await lstat(canonical, { bigint: true })
     if (!canonicalStat.isDirectory() || canonicalStat.isSymbolicLink() || !sameIdentity(initial, canonicalStat)) {
-      throw new Error('Invalid temporary directory')
+      throw new OwnedTemporaryFileInvalidError('Invalid temporary directory')
     }
     return new OwnedTemporaryFiles(canonical, { dev: canonicalStat.dev, ino: canonicalStat.ino })
   }
@@ -107,9 +108,9 @@ export class OwnedTemporaryFiles {
   }> {
     await this.assertRoot()
     const candidate = resolve(path)
-    if (!contained(this.root, candidate)) throw new Error('Temporary file escaped its owned directory')
+    if (!contained(this.root, candidate)) throw new OwnedTemporaryFileInvalidError('Temporary file escaped its owned directory')
     const pathStat = await lstat(candidate, { bigint: true })
-    if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1n) throw new Error('Invalid temporary file')
+    if (!pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.nlink !== 1n) throw new OwnedTemporaryFileInvalidError('Invalid temporary file')
     const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0
     const handle = await open(candidate, fsConstants.O_RDONLY | noFollow)
     try {
@@ -118,10 +119,10 @@ export class OwnedTemporaryFiles {
         !handleStat.isFile() || handleStat.nlink !== 1n
         || !sameIdentity(pathStat, handleStat)
         || handleStat.size > BigInt(Number.MAX_SAFE_INTEGER)
-      ) throw new Error('Invalid temporary file')
+      ) throw new OwnedTemporaryFileInvalidError('Invalid temporary file')
       if (handleStat.size > BigInt(maximumBytes)) throw new OwnedTemporaryFileTooLargeError()
       const canonical = await realpath(candidate)
-      if (!contained(this.root, canonical)) throw new Error('Temporary file escaped its owned directory')
+      if (!contained(this.root, canonical)) throw new OwnedTemporaryFileInvalidError('Temporary file escaped its owned directory')
       await this.assertRoot()
       return { handle, size: Number(handleStat.size) }
     } catch (error) {
@@ -136,6 +137,6 @@ export class OwnedTemporaryFiles {
       !current.isDirectory() || current.isSymbolicLink()
       || !sameIdentity(current, this.identity)
       || await realpath(this.root) !== this.root
-    ) throw new Error('Owned temporary directory changed')
+    ) throw new OwnedTemporaryFileInvalidError('Owned temporary directory changed')
   }
 }

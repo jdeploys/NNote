@@ -173,7 +173,11 @@ describe('SummaryService', () => {
     const beforeSummary = JSON.stringify(h.meetings.listSummarySections('meeting-1'))
     const service = new SummaryService(h.meetings, h.templates, () => ({ summarize: vi.fn(async () => JSON.stringify(makeResponse(h))) }))
 
-    await expect(service.summarizeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_MALFORMED_SUMMARY' })
+    const failure = await service.summarizeMeeting('meeting-1').catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: 'SUMMARY_MALFORMED_RESPONSE',
+      message: 'The summary provider returned an invalid response.',
+    })
 
     expect(JSON.stringify(h.meetings.listTranscript('meeting-1'))).toBe(beforeTranscript)
     expect(JSON.stringify(h.meetings.listSummarySections('meeting-1'))).toBe(beforeSummary)

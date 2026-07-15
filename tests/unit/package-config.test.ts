@@ -132,7 +132,8 @@ describe('release package configuration', () => {
 
   it('uses state-neutral release copy for macOS signing diagnostics', () => {
     const workflow = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
-    expect(workflow).toContain('macOS signing and notarization state is reported by attached workflow diagnostics')
+    expect(workflow).toContain('macOS signing and notarization diagnostics are available as workflow artifacts')
+    expect(workflow).not.toContain('attached workflow diagnostics')
     expect(workflow).not.toContain('macOS artifacts are ad-hoc signed and unnotarized unless')
   })
 

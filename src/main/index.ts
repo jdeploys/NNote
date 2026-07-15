@@ -31,6 +31,7 @@ import { OpenAiTranscriptionAdapter } from './ai/providers/openAiTranscriptionAd
 import { OpenAiSummaryAdapter } from './ai/providers/openAiSummaryAdapter'
 import { ProviderRegistry } from './ai/providers/providerRegistry'
 import { CodexCliSummaryAdapter } from './ai/providers/codexCliSummaryAdapter'
+import { createCodexCommandResolver } from './ai/providers/codexCommandResolver'
 import { runOwnedProcess } from './process/runOwnedProcess'
 import { WhisperModelManager } from './localModels/whisperModelManager'
 import { publishWhisperProgressToLiveWindows } from './window/publishWhisperProgress'
@@ -79,7 +80,11 @@ if (verificationRequest !== null) {
           ],
           [
             new OpenAiSummaryAdapter(new OpenAiSummaryGateway(credentialStore)),
-            new CodexCliSummaryAdapter(runOwnedProcess, app.getPath('temp')),
+            new CodexCliSummaryAdapter(
+              runOwnedProcess,
+              app.getPath('temp'),
+              createCodexCommandResolver(),
+            ),
           ],
         )
         registerSettingsHandlers(

@@ -1,6 +1,15 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { OwnedProcessRequest, OwnedProcessResult } from '../../process/runOwnedProcess'
+import {
+  OwnedTemporaryFileInvalidError,
+  OwnedTemporaryFiles,
+  OwnedTemporaryFileTooLargeError,
+} from '../../localRuntime/ownedTemporaryFiles'
+import {
+  createCodexCommandResolver,
+  type CodexCommandResolver,
+} from './codexCommandResolver'
 import { ProviderError, safeProviderError } from './providerErrors'
 import type {
   ProviderAvailability,
@@ -13,12 +22,18 @@ export type OwnedProcessRunner = (request: OwnedProcessRequest) => Promise<Owned
 
 export interface CodexSummaryFiles {
   mkdtemp: typeof mkdtemp
-  readFile: typeof readFile
   writeFile: typeof writeFile
   rm: typeof rm
 }
 
-const nodeFiles: CodexSummaryFiles = { mkdtemp, readFile, writeFile, rm }
+export type CodexResultReader = (ownedDirectory: string) => Promise<string>
+
+const nodeFiles: CodexSummaryFiles = { mkdtemp, writeFile, rm }
+const MAX_RESULT_BYTES = 4 * 1024 * 1024
+const readOwnedResult: CodexResultReader = async (ownedDirectory) => {
+  const ownedFiles = await OwnedTemporaryFiles.capture(ownedDirectory)
+  return ownedFiles.readText(join(ownedDirectory, 'result.json'), MAX_RESULT_BYTES)
+}
 
 const available: ProviderAvailability = { available: true, code: null, message: null }
 const availabilityMessages = {
@@ -36,13 +51,14 @@ export class CodexCliSummaryAdapter implements SummaryProvider {
   constructor(
     private readonly runProcess: OwnedProcessRunner,
     private readonly temporaryRoot: string,
+    private readonly resolveCommand: CodexCommandResolver = createCodexCommandResolver(),
     private readonly files: CodexSummaryFiles = nodeFiles,
+    private readonly readResult: CodexResultReader = readOwnedResult,
   ) {}
 
   async availability(): Promise<ProviderAvailability> {
     try {
-      const result = await this.runProcess({
-        command: 'codex',
+      const result = await this.runResolvedCommand({
         args: ['login', 'status'],
         cwd: this.temporaryRoot,
       })
@@ -70,8 +86,7 @@ export class CodexCliSummaryAdapter implements SummaryProvider {
     try {
       ownedDirectory = await this.files.mkdtemp(join(this.temporaryRoot, 'nnote-codex-summary-'))
       await this.files.writeFile(join(ownedDirectory, 'schema.json'), JSON.stringify(request.schema), 'utf8')
-      const processResult = await this.runProcess({
-        command: 'codex',
+      const processResult = await this.runResolvedCommand({
         args: [
           'exec', '--ephemeral', '--sandbox', 'read-only', '--skip-git-repo-check',
           '--output-schema', 'schema.json', '--output-last-message', 'result.json', '-',
@@ -83,9 +98,13 @@ export class CodexCliSummaryAdapter implements SummaryProvider {
 
       let resultText: string
       try {
-        resultText = await this.files.readFile(join(ownedDirectory, 'result.json'), 'utf8')
+        resultText = await this.readResult(ownedDirectory)
       } catch (error) {
-        if (hasErrorCode(error, 'ENOENT')) throw invalidSummaryError()
+        if (
+          hasErrorCode(error, 'ENOENT')
+          || error instanceof OwnedTemporaryFileInvalidError
+          || error instanceof OwnedTemporaryFileTooLargeError
+        ) throw invalidSummaryError()
         throw safeProviderError('CODEX_UNAVAILABLE', 'Codex CLI summary failed.', true)
       }
       let parsed: unknown
@@ -112,6 +131,33 @@ export class CodexCliSummaryAdapter implements SummaryProvider {
       }
     }
   }
+
+  private async runResolvedCommand(
+    request: Omit<OwnedProcessRequest, 'command'>,
+  ): Promise<OwnedProcessResult> {
+    return runResolvedCodexCommand(this.runProcess, this.resolveCommand, request)
+  }
+}
+
+export async function runResolvedCodexCommand(
+  runProcess: OwnedProcessRunner,
+  resolveCommand: CodexCommandResolver,
+  request: Omit<OwnedProcessRequest, 'command'>,
+): Promise<OwnedProcessResult> {
+  const candidates = await resolveCommand()
+  if (candidates.length === 0) return { status: 'spawn_error', code: 'ENOENT' }
+
+  let lastSpawnFailure: OwnedProcessResult = { status: 'spawn_error', code: 'ENOENT' }
+  for (const candidate of candidates) {
+    const result = await runProcess({
+      ...request,
+      command: candidate.command,
+      args: [...candidate.argsPrefix, ...request.args],
+    })
+    if (!isSpawnLayerFailure(result)) return result
+    lastSpawnFailure = result
+  }
+  return lastSpawnFailure
 }
 
 function unavailable(code: UnavailableCode): ProviderAvailability {
@@ -136,6 +182,11 @@ function executionError(result: Exclude<OwnedProcessResult, { status: 'success' 
     return safeProviderError('CODEX_NOT_INSTALLED', availabilityMessages.CODEX_NOT_INSTALLED, true)
   }
   return safeProviderError('CODEX_UNAVAILABLE', 'Codex CLI summary failed.', true)
+}
+
+function isSpawnLayerFailure(result: OwnedProcessResult): boolean {
+  return result.status === 'spawn_error'
+    && ['ENOENT', 'EACCES', 'EPERM', 'EINVAL'].includes(result.code)
 }
 
 function invalidSummaryError() {

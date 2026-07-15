@@ -37,10 +37,10 @@ export class SummaryService {
     try {
       json = JSON.parse(raw)
     } catch {
-      throw safeProviderError('OPENAI_MALFORMED_SUMMARY', 'OpenAI returned an invalid summary response.', false)
+      throw safeProviderError('SUMMARY_MALFORMED_RESPONSE', 'The summary provider returned an invalid response.', false)
     }
     const parsed = createSummaryResponseSchema(template, knownSpeakerIds).safeParse(json)
-    if (!parsed.success) throw safeProviderError('OPENAI_MALFORMED_SUMMARY', 'OpenAI returned an invalid summary response.', false)
+    if (!parsed.success) throw safeProviderError('SUMMARY_MALFORMED_RESPONSE', 'The summary provider returned an invalid response.', false)
     const sectionById = new Map(parsed.data.sections.map((section) => [section.sectionId, section]))
     return this.meetings.completeSummary(
       meetingId,

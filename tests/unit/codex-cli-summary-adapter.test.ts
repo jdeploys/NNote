@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { PassThrough, Writable } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +23,7 @@ const schema = {
 }
 
 const validSummary = { title: '회의', items: ['결정'], choice: null }
+const resolveCodex = async () => [{ command: 'codex', argsPrefix: [] as string[] }]
 const temporaryRoots: string[] = []
 
 async function temporaryRoot() {
@@ -47,7 +48,7 @@ describe('CodexCliSummaryAdapter', () => {
       await writeFile(join(request.cwd, 'result.json'), JSON.stringify(validSummary), 'utf8')
       return result()
     })
-    const adapter = new CodexCliSummaryAdapter(run, root)
+    const adapter = new CodexCliSummaryAdapter(run, root, resolveCodex)
 
     await expect(adapter.summarize({ input: 'secret meeting transcript', schema }))
       .resolves.toBe(JSON.stringify(validSummary))
@@ -63,8 +64,88 @@ describe('CodexCliSummaryAdapter', () => {
     expect(await readdir(root)).toEqual([])
   })
 
+  it('prepends the resolved command arguments for availability and summary execution', async () => {
+    const root = await temporaryRoot()
+    const resolveCommand = vi.fn(async () => [{ command: 'C:/safe/node.exe', argsPrefix: ['C:/safe/codex.js'] }])
+    const run = vi.fn(async (request: { cwd: string; args: readonly string[] }) => {
+      if (request.args.includes('exec')) await writeFile(join(request.cwd, 'result.json'), JSON.stringify(validSummary), 'utf8')
+      return result()
+    })
+    const adapter = new CodexCliSummaryAdapter(run, root, resolveCommand)
+
+    await expect(adapter.availability()).resolves.toMatchObject({ available: true })
+    await expect(adapter.summarize({ input: 'transcript', schema })).resolves.toBe(JSON.stringify(validSummary))
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      command: 'C:/safe/node.exe',
+      args: ['C:/safe/codex.js', 'login', 'status'],
+    })
+    expect(run.mock.calls[1]?.[0]).toMatchObject({
+      command: 'C:/safe/node.exe',
+      args: ['C:/safe/codex.js', 'exec', '--ephemeral', '--sandbox', 'read-only', '--skip-git-repo-check', '--output-schema', 'schema.json', '--output-last-message', 'result.json', '-'],
+    })
+  })
+
+  it('classifies a missing safe Windows command without invoking a process', async () => {
+    const run = vi.fn(async () => result())
+    const adapter = new CodexCliSummaryAdapter(run, await temporaryRoot(), async () => [])
+
+    await expect(adapter.availability()).resolves.toEqual({
+      available: false,
+      code: 'CODEX_NOT_INSTALLED',
+      message: 'Codex CLI is not installed.',
+    })
+    await expect(adapter.summarize({ input: 'transcript', schema })).rejects.toMatchObject({
+      code: 'CODEX_NOT_INSTALLED',
+      retryable: true,
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it.each(['availability', 'summary'] as const)(
+    'falls back from an inaccessible executable to npm for %s',
+    async (operation) => {
+      const root = await temporaryRoot()
+      const resolveCommand = async () => [
+        { command: 'C:/WindowsApps/codex.exe', argsPrefix: [] },
+        { command: 'C:/node.exe', argsPrefix: ['C:/npm/codex.js'] },
+      ]
+      const run = vi.fn(async (request: { command: string; cwd: string }) => {
+        if (request.command.includes('WindowsApps')) return result({ status: 'spawn_error', code: 'EPERM' })
+        if (operation === 'summary') await writeFile(join(request.cwd, 'result.json'), JSON.stringify(validSummary), 'utf8')
+        return result()
+      })
+      const adapter = new CodexCliSummaryAdapter(run, root, resolveCommand)
+
+      if (operation === 'availability') await expect(adapter.availability()).resolves.toMatchObject({ available: true })
+      else await expect(adapter.summarize({ input: 'transcript', schema })).resolves.toBe(JSON.stringify(validSummary))
+
+      expect(run.mock.calls.map(([request]) => request.command)).toEqual([
+        'C:/WindowsApps/codex.exe',
+        'C:/node.exe',
+      ])
+    },
+  )
+
+  it.each(['availability', 'summary'] as const)(
+    'does not fall back after a launched nonzero %s process',
+    async (operation) => {
+      const run = vi.fn(async () => result({ status: 'nonzero_exit', exitCode: 1, stdout: '', stderr: 'Not logged in' }))
+      const adapter = new CodexCliSummaryAdapter(run, await temporaryRoot(), async () => [
+        { command: 'C:/first/codex.exe', argsPrefix: [] },
+        { command: 'C:/node.exe', argsPrefix: ['C:/npm/codex.js'] },
+      ])
+
+      if (operation === 'availability') {
+        await expect(adapter.availability()).resolves.toMatchObject({ code: 'CODEX_NOT_AUTHENTICATED' })
+      } else {
+        await expect(adapter.summarize({ input: 'transcript', schema })).rejects.toMatchObject({ code: 'CODEX_UNAVAILABLE' })
+      }
+      expect(run).toHaveBeenCalledTimes(1)
+    },
+  )
+
   it('describes cloud text privacy and reports authenticated availability', async () => {
-    const adapter = new CodexCliSummaryAdapter(async () => result(), await temporaryRoot())
+    const adapter = new CodexCliSummaryAdapter(async () => result(), await temporaryRoot(), resolveCodex)
     await expect(adapter.descriptor()).resolves.toEqual({
       id: 'codex_cli',
       stage: 'summary',
@@ -83,7 +164,7 @@ describe('CodexCliSummaryAdapter', () => {
     ['overflow', { status: 'output_overflow', stream: 'stderr' }, 'CODEX_UNAVAILABLE'],
     ['unknown failure', { status: 'nonzero_exit', exitCode: 2, stdout: 'secret', stderr: 'C:/private' }, 'CODEX_UNAVAILABLE'],
   ] as const)('classifies %s availability without leaking diagnostics', async (_name, processResult, code) => {
-    const adapter = new CodexCliSummaryAdapter(async () => processResult, await temporaryRoot())
+    const adapter = new CodexCliSummaryAdapter(async () => processResult, await temporaryRoot(), resolveCodex)
     const availability = await adapter.availability()
     expect(availability).toMatchObject({ available: false, code })
     expect(JSON.stringify(availability)).not.toMatch(/secret|private|config\.toml/i)
@@ -106,7 +187,7 @@ describe('CodexCliSummaryAdapter', () => {
     const adapter = new CodexCliSummaryAdapter(async ({ cwd }) => {
       await writeFile(join(cwd, 'result.json'), JSON.stringify(invalidValue), 'utf8')
       return result()
-    }, root)
+    }, root, resolveCodex)
     await expect(adapter.summarize({ input: 'transcript', schema })).rejects.toMatchObject({
       code: 'CODEX_INVALID_SUMMARY',
       retryable: false,
@@ -118,6 +199,7 @@ describe('CodexCliSummaryAdapter', () => {
     const runnerAdapter = new CodexCliSummaryAdapter(
       async () => { throw new Error('TOP SECRET PROMPT at C:/private/path') },
       root,
+      resolveCodex,
     )
     const runnerError = await runnerAdapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
     expect(runnerError).toMatchObject({ code: 'CODEX_UNAVAILABLE', retryable: true })
@@ -129,7 +211,7 @@ describe('CodexCliSummaryAdapter', () => {
     })
 
     const missingRoot = join(root, 'missing', 'private')
-    const filesystemAdapter = new CodexCliSummaryAdapter(async () => result(), missingRoot)
+    const filesystemAdapter = new CodexCliSummaryAdapter(async () => result(), missingRoot, resolveCodex)
     const filesystemError = await filesystemAdapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
     expect(filesystemError).toMatchObject({ code: 'CODEX_UNAVAILABLE', retryable: true })
     expect(filesystemError.message).not.toMatch(/TOP SECRET|private|missing/i)
@@ -140,7 +222,8 @@ describe('CodexCliSummaryAdapter', () => {
     const adapter = new CodexCliSummaryAdapter(
       async () => ({ status: 'timeout' }),
       root,
-      { mkdtemp, readFile, writeFile, rm: async () => { throw new Error('C:/private/cleanup') } },
+      resolveCodex,
+      { mkdtemp, writeFile, rm: async () => { throw new Error('C:/private/cleanup') } },
     )
     await expect(adapter.summarize({ input: 'TOP SECRET PROMPT', schema })).rejects.toMatchObject({
       code: 'CODEX_UNAVAILABLE',
@@ -156,7 +239,7 @@ describe('CodexCliSummaryAdapter', () => {
     ['nonzero', { status: 'nonzero_exit', exitCode: 3, stdout: 'secret stdout', stderr: 'C:/private/stderr' }],
   ] as const)('maps %s execution failure without exposing paths, prompts, stdout, or stderr', async (_name, processResult) => {
     const root = await temporaryRoot()
-    const adapter = new CodexCliSummaryAdapter(async () => processResult, root)
+    const adapter = new CodexCliSummaryAdapter(async () => processResult, root, resolveCodex)
     const error = await adapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
     expect(error).toMatchObject({ retryable: true })
     expect(`${error.code} ${error.message}`).not.toMatch(/TOP SECRET|private|stdout|stderr|nnote-codex-summary/i)
@@ -172,7 +255,7 @@ describe('CodexCliSummaryAdapter', () => {
     const adapter = new CodexCliSummaryAdapter(async ({ cwd }) => {
       if (output !== null) await writeFile(join(cwd, 'result.json'), output, 'utf8')
       return result({ stdout: 'secret stdout', stderr: 'C:/private/stderr' })
-    }, root)
+    }, root, resolveCodex)
     const error = await adapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
     expect(error).toMatchObject({ code: 'CODEX_INVALID_SUMMARY', retryable: false })
     expect(error.message).toBe('Codex CLI returned an invalid summary response.')
@@ -186,14 +269,9 @@ describe('CodexCliSummaryAdapter', () => {
       const adapter = new CodexCliSummaryAdapter(
         async () => result(),
         root,
-        {
-          mkdtemp,
-          writeFile,
-          rm,
-          readFile: (async () => {
-            throw Object.assign(new Error(`TOP SECRET at C:/private/result.json`), { code })
-          }) as typeof readFile,
-        },
+        resolveCodex,
+        { mkdtemp, writeFile, rm },
+        async () => { throw Object.assign(new Error(`TOP SECRET at C:/private/result.json`), { code }) },
       )
       const error = await adapter.summarize({ input: 'TOP SECRET PROMPT', schema }).catch((value) => value)
       expect(error).toMatchObject({ code: 'CODEX_UNAVAILABLE', retryable: true })
@@ -201,6 +279,35 @@ describe('CodexCliSummaryAdapter', () => {
       expect(`${error.code} ${error.message}`).not.toMatch(/TOP SECRET|private|result\.json/i)
     },
   )
+
+  it('rejects a result larger than 4 MiB without reading it into memory', async () => {
+    const root = await temporaryRoot()
+    const adapter = new CodexCliSummaryAdapter(async ({ cwd }) => {
+      await writeFile(join(cwd, 'result.json'), Buffer.alloc(4 * 1024 * 1024 + 1, 0x20))
+      return result()
+    }, root, resolveCodex)
+
+    await expect(adapter.summarize({ input: 'transcript', schema })).rejects.toMatchObject({
+      code: 'CODEX_INVALID_SUMMARY',
+      retryable: false,
+    })
+    expect(await readdir(root)).toEqual([])
+  })
+
+  it.runIf(process.platform !== 'win32')('rejects a symlinked result without following it', async () => {
+    const root = await temporaryRoot()
+    const outside = join(root, 'outside.json')
+    await writeFile(outside, JSON.stringify(validSummary), 'utf8')
+    const adapter = new CodexCliSummaryAdapter(async ({ cwd }) => {
+      await symlink(outside, join(cwd, 'result.json'), 'file')
+      return result()
+    }, root, resolveCodex)
+
+    await expect(adapter.summarize({ input: 'transcript', schema })).rejects.toMatchObject({
+      code: 'CODEX_INVALID_SUMMARY',
+      retryable: false,
+    })
+  })
 })
 
 function fakeChild() {
