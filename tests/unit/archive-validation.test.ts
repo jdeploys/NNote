@@ -42,6 +42,27 @@ describe('Nnote archive validation', () => {
     expect(() => parseArchive(zipSync(entries))).toThrow(/duration|ordered/i)
   })
 
+  it.each(['recording', 'recoverable', 'transcribing', 'summarizing', 'failed', 'deleted'])(
+    'rejects imported transient %s status before any archive can be written to the database', (status) => {
+      const meeting = JSON.parse(new TextDecoder().decode(valid['meeting.json']))
+      const entries = { ...valid, 'meeting.json': strToU8(JSON.stringify({ ...meeting, status })) }
+      expect(() => parseArchive(zipSync(entries))).toThrow(/status|stable|meeting/i)
+    },
+  )
+
+  it('rejects a v2 manifest that smuggles legacy audio outside audioParts', () => {
+    const entries = {
+      ...valid,
+      'audio.webm': minimalWebm,
+      'manifest.json': strToU8(JSON.stringify({
+        format: 'nnote', version: 2,
+        entries: ['meeting.json', 'transcript.json', 'summary.json', 'audio.webm'],
+        audioParts: [],
+      })),
+    }
+    expect(() => parseArchive(zipSync(entries))).toThrow(/audio|manifest|entry/i)
+  })
+
   it.each([
     ['traversal', { ...valid, '../meeting.json': strToU8('{}') }],
     ['absolute path', { ...valid, 'C:\\audio.webm': new Uint8Array() }],

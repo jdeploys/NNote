@@ -1,6 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
-import { AudioPolicySchema, MeetingStatusSchema } from '../../shared/contracts/meeting'
+import { AudioPolicySchema } from '../../shared/contracts/meeting'
 import { SummaryTemplateSectionSchema } from '../../shared/contracts/template'
 
 export const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
@@ -17,7 +17,7 @@ export const ArchiveTemplateSchema = z.object({
 }).strict()
 export const ArchiveMeetingSchema = z.object({
   title: z.string(), createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true }),
-  durationMs: z.number().int().nonnegative(), status: MeetingStatusSchema,
+  durationMs: z.number().int().nonnegative(), status: z.enum(['recorded', 'completed']),
   audioPolicy: AudioPolicySchema, template: ArchiveTemplateSchema.nullable(),
 }).strict()
 export const ArchiveTranscriptSchema = z.object({
@@ -211,6 +211,7 @@ export function parseArchive(bytes: Uint8Array): ParsedArchive {
   const actualPayload = central.map((e) => e.name).filter((n) => n !== 'manifest.json').sort()
   if (JSON.stringify([...manifest.entries].sort()) !== JSON.stringify(actualPayload)) throw new Error('Archive manifest entries do not match ZIP entries')
   const meeting = parseJson('meeting.json', files['meeting.json'], ArchiveMeetingSchema)
+  if (manifest.version === 2 && files['audio.webm'] !== undefined) throw new Error('Archive v2 audio must be declared in audioParts')
   const audioParts = manifest.version === 1
     ? (files['audio.webm'] === undefined ? [] : [{ partIndex: 0, entry: 'audio.webm', byteCount: files['audio.webm'].byteLength, durationMs: meeting.durationMs, bytes: files['audio.webm'] }])
     : manifest.audioParts.map((part, index) => {
