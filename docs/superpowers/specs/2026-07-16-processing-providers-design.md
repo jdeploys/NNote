@@ -33,6 +33,28 @@ Provider choices are stored in a schema-validated singleton settings record in N
 
 OpenAI credentials are required only when at least one selected processing stage uses OpenAI. Recording, meeting management, archive import/export, and transcript import remain usable without a key. When processing requires a missing key, Nnote routes the user to settings rather than blocking unrelated features.
 
+## Adapter architecture
+
+Provider-specific behavior must not be implemented through repeated `if`/`else` or `switch` branches across processing services, IPC handlers, or renderer components. Nnote uses two small provider ports:
+
+- `TranscriptionProvider`: exposes a stable provider ID, availability status, and `transcribe(request)` operation that returns normalized transcription segments.
+- `SummaryProvider`: exposes a stable provider ID, availability status, and `summarize(request)` operation that returns the existing validated summary response shape.
+
+Concrete adapters own every provider-specific detail:
+
+- `OpenAiTranscriptionAdapter` wraps the existing OpenAI transcription gateway.
+- `LocalWhisperTranscriptionAdapter` owns conversion, helper execution, and Whisper output normalization.
+- `OpenAiSummaryAdapter` wraps the existing Responses gateway.
+- `CodexCliSummaryAdapter` owns Codex discovery, invocation, and output normalization.
+
+A provider registry is created once in the main-process composition root. It maps stable IDs to adapter instances and is the only place that resolves a persisted provider ID. `ProcessingService`, `TranscriptionService`, and `SummaryService` depend on the selected port interface and do not know how many providers exist or contain provider-name conditionals. Adding another provider requires a new adapter plus one registry entry, not edits throughout the processing flow.
+
+Provider descriptors returned to the renderer contain generic fields such as ID, display name, availability, privacy classification, and capabilities. The settings UI renders those descriptors through shared provider controls. Provider-specific actions such as Whisper model management or Codex authentication guidance live in focused child components selected by descriptor capability, not in one monolithic conditional component.
+
+Error translation follows the same boundary. Each adapter converts process, SDK, and validation failures into the existing safe processing-error contract before returning control to orchestration. Orchestration remains responsible only for state transitions, transactions, retries, and progress events.
+
+The implementation must prefer composition over provider inheritance, keep adapter files focused on one external system, and avoid a generic abstraction layer beyond the two ports and registry. This prevents both scattered branching and an unnecessary provider framework.
+
 ## Local Whisper distribution
 
 Nnote packages a platform- and architecture-specific `whisper.cpp` helper in each installer:
@@ -124,6 +146,8 @@ Nnote never auto-selects a provider from hardware detection. Capability checks c
 
 Paired tests must cover the exact changed and unchanged modes:
 
+- Provider registry contract tests prove each stable ID resolves exactly one adapter and an unknown persisted ID reconciles to the OpenAI default.
+- Shared adapter contract tests exercise normalized success, availability, cancellation, and safe failure behavior without provider branches in orchestration tests.
 - `local Whisper transcription invokes only bundled local helpers` and `OpenAI transcription still invokes only the OpenAI gateway`.
 - `Codex CLI summary invokes only codex exec` and `OpenAI summary still invokes only the Responses gateway`.
 - Model download success, resumable interruption, digest rejection, atomic activation, and deletion.
