@@ -4,9 +4,9 @@ import { resolve } from 'node:path'
 
 test.skip(process.platform !== 'win32', 'Documentation screenshots use the reviewed Windows rendering.')
 
-const output = (name: string) => resolve('docs', 'screenshots', name)
+const output = (name: string) => resolve('docs', 'screenshots', 'after-linear', name)
 
-test.beforeAll(async () => mkdir(resolve('docs', 'screenshots'), { recursive: true }))
+test.beforeAll(async () => mkdir(resolve('docs', 'screenshots', 'after-linear'), { recursive: true }))
 
 async function capture(page: Page, state: string, name: string, heading: string) {
   await page.goto(`/?state=${state}`)
