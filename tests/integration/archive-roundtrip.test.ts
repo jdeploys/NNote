@@ -8,6 +8,7 @@ import { TemplateRepository } from '../../src/main/db/templateRepository'
 import { exportMeetingArchive } from '../../src/main/archive/exportMeeting'
 import { importMeetingArchive, reconcileImportJournals } from '../../src/main/archive/importMeeting'
 import { parseArchive } from '../../src/main/archive/archiveSchema'
+import { TemplateInUseError, TemplateService } from '../../src/main/templates/templateService'
 
 describe('Nnote archive round trip', () => {
   const minimalWebm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x87, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d, 0x18, 0x53, 0x80, 0x67, 0xff])
@@ -73,6 +74,31 @@ describe('Nnote archive round trip', () => {
     expect(target.listActionItems(imported.meetingId).map((item) => item.content)).toEqual(['배포'])
     expect(await readFile(join(targetRecordings, target.requireById(imported.meetingId).audioPath!))).toEqual(Buffer.from(audio))
     sourceDb.close(); targetDb.close()
+  })
+
+  it('keeps a completed meeting custom template exportable when deletion is refused', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nnote-template-in-use-')); roots.push(root)
+    const recordings = join(root, 'recordings'); await mkdir(recordings)
+    const database = openDatabase(join(root, 'source.sqlite'))
+    const repository = new TemplateRepository(database)
+    const service = new TemplateService(repository)
+    const now = '2026-07-15T00:00:00.000Z'
+    const template = service.create({
+      name: '완료 회의 템플릿',
+      sections: [{ title: '결론', kind: 'paragraph', prompt: '결론을 정리하세요.' }],
+    })
+    database.prepare('INSERT INTO meetings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('completed-custom', '완료 회의', now, now, 0, 'completed', 'keep', null, 0, template.id)
+
+    expect(() => service.delete(template.id)).toThrow(TemplateInUseError)
+    const exported = await exportMeetingArchive('completed-custom', new MeetingRepository(database), repository, recordings)
+
+    expect(parseArchive(exported.bytes).meeting.template).toEqual({
+      sourceId: template.id,
+      name: template.name,
+      sections: template.sections,
+    })
+    database.close()
   })
 
   it('performs no writes when validation fails', async () => {

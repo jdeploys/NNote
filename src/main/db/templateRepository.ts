@@ -78,6 +78,13 @@ export class TemplateRepository {
     return rows.map(toTemplate)
   }
 
+  countMeetingReferences(id: string): number {
+    const row = this.database
+      .prepare('SELECT COUNT(*) AS count FROM meetings WHERE selected_template_id = ?')
+      .get(id) as { count: number }
+    return row.count
+  }
+
   delete(id: string): boolean {
     return this.database.prepare('DELETE FROM summary_templates WHERE id = ?').run(id).changes > 0
   }

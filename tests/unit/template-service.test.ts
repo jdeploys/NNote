@@ -10,6 +10,7 @@ import {
 } from '../../src/main/templates/defaultTemplate'
 import {
   ImmutableDefaultTemplateError,
+  TemplateInUseError,
   TemplateService,
 } from '../../src/main/templates/templateService'
 
@@ -117,8 +118,71 @@ describe('TemplateService', () => {
     expect(() => service.create({ name: 'x', sections: [{ title: 'x', kind: 'paragraph', prompt: 'x'.repeat(2001) }] })).toThrow()
     const created = service.create({ name: 'x', sections: [{ title: 'x', kind: 'bullet_list', prompt: 'ok' }] })
     expect(() => service.reorderSections(created.id, ['unknown-section-id'])).toThrow()
-    expect(() => service.update(created.id, { sections: [{ ...created.sections[0]!, id: '10000000-0000-4000-8000-000000000099' }] })).toThrow(/stable/i)
+    expect(() => service.update(created.id, { sections: [{ ...created.sections[0]!, id: 'not-a-uuid' }] })).toThrow()
     expect(service.get(created.id).sections).toEqual(created.sections)
+    database.close()
+  })
+
+  it('adds and removes sections from one to eight while retaining existing IDs and requiring unique UUIDs', () => {
+    const { database, service } = harness()
+    const created = service.create({
+      name: '가변 템플릿',
+      sections: [{ title: '기존', kind: 'paragraph', prompt: '기존 내용을 유지하세요.' }],
+    })
+    const retainedId = created.sections[0]!.id
+    const additions = Array.from({ length: 7 }, (_, index) => ({
+      id: `10000000-0000-4000-8000-${String(index + 10).padStart(12, '0')}`,
+      title: `추가 ${index + 1}`,
+      kind: 'bullet_list' as const,
+      prompt: `추가 ${index + 1} 내용을 정리하세요.`,
+    }))
+
+    const expanded = service.update(created.id, {
+      sections: [{ ...created.sections[0]!, title: '수정된 기존' }, ...additions],
+    })
+    expect(expanded.sections).toHaveLength(8)
+    expect(expanded.sections[0]).toMatchObject({ id: retainedId, title: '수정된 기존' })
+    expect(new Set(expanded.sections.map(({ id }) => id)).size).toBe(8)
+
+    const reduced = service.update(created.id, { sections: [expanded.sections[7]!] })
+    expect(reduced.sections).toEqual([expanded.sections[7]])
+    expect(() => service.update(created.id, {
+      sections: [reduced.sections[0]!, { ...reduced.sections[0]!, title: '중복' }],
+    })).toThrow(/unique/i)
+    expect(service.get(created.id).sections).toEqual(reduced.sections)
+    database.close()
+  })
+
+  it.each(['draft', 'recording', 'recoverable', 'recorded', 'transcribing', 'summarizing', 'completed', 'failed', 'deleted'] as const)(
+    'refuses deletion when a %s meeting references the template and preserves the reference',
+    (status) => {
+      const { database, service } = harness()
+      const created = service.create({
+        name: `${status} 템플릿`,
+        sections: [{ title: '요약', kind: 'paragraph', prompt: '요약하세요.' }],
+      })
+      const now = '2026-07-15T00:00:00.000Z'
+      database.prepare('INSERT INTO meetings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(`meeting-${status}`, status, now, now, 0, status, 'keep', null, 0, created.id)
+
+      expect(() => service.delete(created.id)).toThrow(TemplateInUseError)
+      expect(service.get(created.id)).toEqual(created)
+      expect(database.prepare('SELECT selected_template_id FROM meetings WHERE id = ?').get(`meeting-${status}`))
+        .toEqual({ selected_template_id: created.id })
+      database.close()
+    },
+  )
+
+  it('deletes an unreferenced custom template', () => {
+    const { database, service } = harness()
+    const created = service.create({
+      name: '미사용 템플릿',
+      sections: [{ title: '요약', kind: 'paragraph', prompt: '요약하세요.' }],
+    })
+
+    service.delete(created.id)
+
+    expect(service.list().map(({ id }) => id)).toEqual([DEFAULT_TEMPLATE_ID])
     database.close()
   })
 

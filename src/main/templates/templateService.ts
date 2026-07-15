@@ -17,6 +17,15 @@ export class ImmutableDefaultTemplateError extends Error {
   }
 }
 
+export class TemplateInUseError extends Error {
+  readonly code = 'TEMPLATE_IN_USE'
+
+  constructor(readonly templateId: string) {
+    super(`Template ${templateId} is in use by a meeting`)
+    this.name = 'TemplateInUseError'
+  }
+}
+
 export class TemplateService {
   constructor(private readonly repository: TemplateRepository) {}
 
@@ -60,14 +69,8 @@ export class TemplateService {
     const parsed = UpdateTemplateInputSchema.parse(input)
     const current = this.repository.requireById(id)
     if (parsed.sections !== undefined) {
-      const currentIds = new Set(current.sections.map((section) => section.id))
       const nextIds = new Set(parsed.sections.map((section) => section.id))
-      if (
-        currentIds.size !== nextIds.size ||
-        [...currentIds].some((sectionId) => !nextIds.has(sectionId))
-      ) {
-        throw new Error('Existing section IDs must remain stable')
-      }
+      if (nextIds.size !== parsed.sections.length) throw new Error('Section IDs must be unique')
     }
     return this.repository.save({
       ...current,
@@ -94,6 +97,7 @@ export class TemplateService {
 
   delete(id: string): void {
     this.assertMutable(id)
+    if (this.repository.countMeetingReferences(id) > 0) throw new TemplateInUseError(id)
     this.repository.delete(id)
   }
 
