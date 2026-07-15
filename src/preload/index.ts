@@ -15,6 +15,7 @@ import { SpeakerSchema } from '../shared/contracts/meeting'
 import { ArchiveOperationResultSchema } from '../shared/contracts/archive'
 import {
   ProcessingProviderSettingsSchema,
+  ProviderDescriptorSchema,
   type ProcessingProviderSettings,
 } from '../shared/contracts/settings'
 
@@ -28,6 +29,9 @@ const settings: DesktopApi['settings'] = Object.freeze({
     'settings:update-processing-providers',
     ProcessingProviderSettingsSchema.parse(input),
   ).then((value) => ProcessingProviderSettingsSchema.parse(value)),
+  listProcessingProviderDescriptors: () => ipcRenderer.invoke(
+    'settings:list-processing-provider-descriptors',
+  ).then((value) => ProviderDescriptorSchema.array().parse(value)),
 })
 
 const recording: DesktopApi['recording'] = Object.freeze({

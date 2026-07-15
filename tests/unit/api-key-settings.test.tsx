@@ -16,6 +16,7 @@ const defaultProcessingProviderSettings = {
 const processingSettingsApi = () => ({
   getProcessingProviders: vi.fn().mockResolvedValue(defaultProcessingProviderSettings),
   updateProcessingProviders: vi.fn(async (input) => input),
+  listProcessingProviderDescriptors: vi.fn().mockResolvedValue([]),
 })
 
 describe('API key settings', () => {
@@ -78,6 +79,26 @@ describe('API key settings', () => {
     await expect(exposedApi!.settings.updateProcessingProviders({
       transcriptionProvider: 'openai', summaryProvider: 'openai', localWhisperModel: 'base',
     })).rejects.toThrow()
+  })
+
+  it('parses processing provider descriptors across the preload boundary', async () => {
+    let exposedApi: DesktopApi | undefined
+    const descriptor = {
+      id: 'openai', stage: 'transcription', displayName: 'OpenAI',
+      availability: { available: true, code: null, message: null },
+      privacy: 'audio_cloud', capabilities: ['api_key', 'speaker_diarization'],
+    }
+    const invoke = vi.fn().mockResolvedValue([descriptor])
+    vi.doMock('electron', () => ({
+      contextBridge: { exposeInMainWorld: (_name: string, api: DesktopApi) => { exposedApi = api } },
+      ipcRenderer: { invoke },
+    }))
+    await import('../../src/preload/index')
+
+    await expect(exposedApi!.settings.listProcessingProviderDescriptors()).resolves.toEqual([descriptor])
+    expect(invoke).toHaveBeenCalledWith('settings:list-processing-provider-descriptors')
+    invoke.mockResolvedValueOnce([{ ...descriptor, privacy: 'device_cloud' }])
+    await expect(exposedApi!.settings.listProcessingProviderDescriptors()).rejects.toThrow()
   })
 
   it('renders the API key settings card in Korean', async () => {

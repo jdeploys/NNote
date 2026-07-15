@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import { z } from 'zod'
 import type { CredentialStore } from '../credentials/credentialStore'
 import { safeOpenAiError, toOpenAiError, toSummaryOpenAiError } from './openAiErrors'
+import type { SummaryRequest } from './providers/providerPorts'
 
 export interface TranscriptionRequest {
   filePath: string
@@ -96,11 +97,6 @@ export class OpenAiGateway implements OpenAiGatewayPort {
       })),
     }
   }
-}
-
-export interface SummaryRequest {
-  input: string
-  schema: { [key: string]: unknown }
 }
 
 export interface OpenAiSummaryGatewayPort {

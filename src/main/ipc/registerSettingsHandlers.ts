@@ -2,6 +2,7 @@ import type { CredentialStore } from '../credentials/credentialStore'
 import type { OpenAiKeyValidator } from '../ai/openAiKeyValidator'
 import type { ProcessingSettingsRepository } from '../settings/processingSettingsRepository'
 import { ProcessingProviderSettingsSchema } from '../../shared/contracts/settings'
+import type { ProviderDescriptor } from '../ai/providers/providerPorts'
 
 interface SettingsIpcMain {
   handle(
@@ -12,6 +13,7 @@ interface SettingsIpcMain {
 
 type KeyValidator = Pick<OpenAiKeyValidator, 'validate'>
 type ProcessingSettings = Pick<ProcessingSettingsRepository, 'get' | 'update'>
+interface ProcessingProviders { descriptors(): Promise<ProviderDescriptor[]> }
 
 export function registerSettingsHandlers(
   ipcMain: SettingsIpcMain,
@@ -19,6 +21,7 @@ export function registerSettingsHandlers(
   validator: KeyValidator,
   processingSettings: ProcessingSettings,
   now: () => Date = () => new Date(),
+  processingProviders?: ProcessingProviders,
 ): void {
   let lastValidatedAt: string | null = null
 
@@ -47,4 +50,10 @@ export function registerSettingsHandlers(
   ipcMain.handle('settings:update-processing-providers', async (_event, input) => (
     processingSettings.update(ProcessingProviderSettingsSchema.parse(input))
   ))
+
+  if (processingProviders !== undefined) {
+    ipcMain.handle('settings:list-processing-provider-descriptors', async () => (
+      processingProviders.descriptors()
+    ))
+  }
 }

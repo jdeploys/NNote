@@ -27,6 +27,9 @@ import { bootstrapAfterImportRecovery } from './app/archiveStartup'
 import { parsePackageVerificationRequest } from './app/packageVerification'
 import { runPackageRuntimeVerification } from './app/runtimePackageVerification'
 import { ProcessingSettingsRepository } from './settings/processingSettingsRepository'
+import { OpenAiTranscriptionAdapter } from './ai/providers/openAiTranscriptionAdapter'
+import { OpenAiSummaryAdapter } from './ai/providers/openAiSummaryAdapter'
+import { ProviderRegistry } from './ai/providers/providerRegistry'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
@@ -48,11 +51,18 @@ if (verificationRequest !== null) {
       start: () => {
         const meetings = new MeetingRepository(database)
         const credentialStore = new KeyringCredentialStore()
+        const processingSettings = new ProcessingSettingsRepository(database)
+        const registry = new ProviderRegistry(
+          [new OpenAiTranscriptionAdapter(new OpenAiGateway(credentialStore))],
+          [new OpenAiSummaryAdapter(new OpenAiSummaryGateway(credentialStore))],
+        )
         registerSettingsHandlers(
           ipcMain,
           credentialStore,
           new OpenAiKeyValidator(),
-          new ProcessingSettingsRepository(database),
+          processingSettings,
+          undefined,
+          registry,
         )
         const recordingService = new RecordingService(meetings, recordingsDirectory)
         const templateRepository = new TemplateRepository(database)
@@ -67,8 +77,16 @@ if (verificationRequest !== null) {
         )
         const processingService = new ProcessingService(
           meetings,
-          new TranscriptionService(meetings, new OpenAiGateway(credentialStore), recordingsDirectory),
-          new SummaryService(meetings, templateService, new OpenAiSummaryGateway(credentialStore)),
+          new TranscriptionService(
+            meetings,
+            () => registry.transcription(processingSettings.get().transcriptionProvider),
+            recordingsDirectory,
+          ),
+          new SummaryService(
+            meetings,
+            templateService,
+            () => registry.summary(processingSettings.get().summaryProvider),
+          ),
           recordingsDirectory,
         )
         registerProcessingHandlers(ipcMain, processingService)

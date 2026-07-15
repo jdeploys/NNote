@@ -3,8 +3,8 @@ import { lstat, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import type { Speaker, TranscriptSegment } from '../../shared/contracts/meeting'
 import type { MeetingRepository } from '../db/meetingRepository'
-import type { OpenAiGatewayPort, ProviderTranscription } from './openAiGateway'
-import { safeOpenAiError, toOpenAiError } from './openAiErrors'
+import type { NormalizedTranscription, TranscriptionProvider } from './providers/providerPorts'
+import { safeProviderError, toProviderError } from './providers/providerErrors'
 import { PROCESS_OWNER_ID } from './processingOwner'
 
 export interface TranscriptionResult {
@@ -12,23 +12,23 @@ export interface TranscriptionResult {
   segments: TranscriptSegment[]
 }
 
-function validateProviderTiming(response: ProviderTranscription): void {
+function validateProviderTiming(response: NormalizedTranscription): void {
   if (!Number.isFinite(response.durationSeconds) || response.durationSeconds < 0) {
-    throw safeOpenAiError('OPENAI_MALFORMED_RESPONSE')
+    throw safeProviderError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription response.', false)
   }
   let previousStart = 0
   for (const segment of response.segments) {
     if (
-      !segment.speaker ||
       !Number.isFinite(segment.startSeconds) ||
       !Number.isFinite(segment.endSeconds) ||
       segment.startSeconds < previousStart ||
       segment.startSeconds < 0 ||
       segment.endSeconds < segment.startSeconds ||
       segment.endSeconds > response.durationSeconds + 0.001 ||
-      typeof segment.text !== 'string'
+      typeof segment.text !== 'string' ||
+      (segment.speakerLabel !== null && (typeof segment.speakerLabel !== 'string' || segment.speakerLabel.length === 0))
     ) {
-      throw safeOpenAiError('OPENAI_MALFORMED_RESPONSE')
+      throw safeProviderError('OPENAI_MALFORMED_RESPONSE', 'OpenAI returned an invalid transcription response.', false)
     }
     previousStart = segment.startSeconds
   }
@@ -37,7 +37,7 @@ function validateProviderTiming(response: ProviderTranscription): void {
 export class TranscriptionService {
   constructor(
     private readonly meetings: MeetingRepository,
-    private readonly gateway: OpenAiGatewayPort,
+    private readonly resolveProvider: () => Pick<TranscriptionProvider, 'transcribe'>,
     private readonly recordingsDirectory: string,
     private readonly ownerId = PROCESS_OWNER_ID,
   ) {}
@@ -63,6 +63,7 @@ export class TranscriptionService {
           throw new Error('Orchestrated transcription is not in the transcribing state')
         }
       }
+      const provider = this.resolveProvider()
       const paths = await this.finalizedPartPaths(meetingId)
       const speakers = new Map<string, Speaker>()
       const segments: TranscriptSegment[] = []
@@ -70,23 +71,24 @@ export class TranscriptionService {
       const meetingPrefix = createHash('sha256').update(meetingId, 'utf8').digest('hex')
 
       for (const [partIndex, filePath] of paths.entries()) {
-        const response = await this.gateway.transcribe({
-          filePath,
-          model: 'gpt-4o-transcribe-diarize',
-          responseFormat: 'diarized_json',
-          chunkingStrategy: 'auto',
-        })
+        const response = await provider.transcribe({ filePath })
         validateProviderTiming(response)
         response.segments.forEach((segment, segmentIndex) => {
-          const providerSpeaker = encodeURIComponent(segment.speaker)
-          const speakerId = `${meetingPrefix}:${partIndex}:${providerSpeaker}`
-          speakers.set(speakerId, {
-            id: speakerId,
-            meetingId,
-            displayName: `Speaker ${segment.speaker}`,
-          })
+          const providerSpeaker = segment.speakerLabel === null
+            ? null
+            : encodeURIComponent(segment.speakerLabel)
+          const speakerId = providerSpeaker === null
+            ? null
+            : `${meetingPrefix}:${partIndex}:${providerSpeaker}`
+          if (speakerId !== null) {
+            speakers.set(speakerId, {
+              id: speakerId,
+              meetingId,
+              displayName: `Speaker ${segment.speakerLabel}`,
+            })
+          }
           segments.push({
-            id: `${meetingPrefix}:${partIndex}:${providerSpeaker}:${segmentIndex}`,
+            id: `${meetingPrefix}:${partIndex}:${providerSpeaker ?? 'segment'}:${segmentIndex}`,
             meetingId,
             speakerId,
             startMs: Math.round((offsetSeconds + segment.startSeconds) * 1_000),
@@ -101,7 +103,7 @@ export class TranscriptionService {
       if (ownAttempt !== null) this.meetings.finishProcessingAttempt(ownAttempt.id, { succeeded: true })
       return result
     } catch (error) {
-      const typed = toOpenAiError(error)
+      const typed = toProviderError(error)
       try {
         if (this.meetings.requireById(meetingId).status === 'transcribing') {
           this.meetings.failTranscription(meetingId, {
@@ -131,19 +133,19 @@ export class TranscriptionService {
       ? durable.map((part) => ({ name: part.relativePath, index: part.partIndex }))
       : meeting.audioPath === null ? [] : [{ name: meeting.audioPath, index: 0 }]
     if (parts.length === 0 || parts.some((part, index) => part.index !== index || basename(part.name) !== part.name)) {
-      throw safeOpenAiError('OPENAI_INVALID_AUDIO')
+      throw safeProviderError('OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.', false)
     }
     return Promise.all(
       parts.map(async ({ name }) => {
         const candidate = join(this.recordingsDirectory, name)
         const details = await lstat(candidate)
         if (details.isSymbolicLink() || !details.isFile()) {
-          throw safeOpenAiError('OPENAI_INVALID_AUDIO')
+          throw safeProviderError('OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.', false)
         }
         const resolved = await realpath(candidate)
         const fromRoot = relative(resolvedRoot, resolved)
         if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
-          throw safeOpenAiError('OPENAI_INVALID_AUDIO')
+          throw safeProviderError('OPENAI_INVALID_AUDIO', 'OpenAI could not process this audio file.', false)
         }
         return resolved
       }),
