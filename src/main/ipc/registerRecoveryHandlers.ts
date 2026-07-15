@@ -5,7 +5,7 @@ interface RecoveryIpcMain {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => Promise<unknown> | unknown): void
 }
 
-type RecoveryServicePort = Pick<RecoveryService, 'scan' | 'recover' | 'suspend' | 'keepAsFile' | 'exportOnly' | 'discard'>
+type RecoveryServicePort = Pick<RecoveryService, 'scan' | 'recover' | 'suspend' | 'keepAsFile' | 'exportOnly' | 'exportOnlyFormat' | 'discard'>
 interface RecoveryDialog {
   showSaveDialog(options: { title: string; defaultPath: string; filters: { name: string; extensions: string[] }[] }): Promise<{ canceled: boolean; filePath?: string }>
 }
@@ -21,9 +21,13 @@ export function registerRecoveryHandlers(ipcMain: RecoveryIpcMain, service: Reco
     const id = MeetingIdSchema.parse(meetingId)
     if (dialog === undefined) return { status: 'failure', code: 'EXPORT_FAILED', message: '복구 파일을 내보내지 못했습니다.' }
     try {
+      const format = await service.exportOnlyFormat(id)
+      const isPackage = format.extension === 'zip'
       const selected = await dialog.showSaveDialog({
-        title: '복구 오디오 내보내기', defaultPath: 'recovered-recording.webm',
-        filters: [{ name: 'WebM audio', extensions: ['webm'] }],
+        title: '복구 오디오 내보내기', defaultPath: `recovered-recording.${format.extension}`,
+        filters: [isPackage
+          ? { name: 'Nnote recovery package', extensions: ['zip'] }
+          : { name: 'WebM audio', extensions: ['webm'] }],
       })
       if (selected.canceled || selected.filePath === undefined) return { status: 'cancelled' }
       await service.exportOnly(id, selected.filePath)

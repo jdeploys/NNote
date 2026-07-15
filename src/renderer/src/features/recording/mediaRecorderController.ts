@@ -77,6 +77,7 @@ export class MediaRecorderController {
   private terminalPromise: Promise<void> | null = null
   private rollPromise: Promise<void> | null = null
   private automaticStopStarted = false
+  private durationLimitReached = false
   private snapshot: RecordingSnapshot = {
     phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,
     activePartIndex: 0, partCount: 0, microphone: 'inactive', localSave: 'idle',
@@ -108,6 +109,7 @@ export class MediaRecorderController {
       })
       this.appendQueue = Promise.resolve()
       this.appendFailure = null
+      this.durationLimitReached = false
       const progress = await this.recording.start(meetingId)
       mainSessionStarted = true
       this.meetingId = meetingId
@@ -148,6 +150,7 @@ export class MediaRecorderController {
       })
       this.appendQueue = Promise.resolve()
       this.appendFailure = null
+      this.durationLimitReached = false
       this.meetingId = meetingId
       this.partIndex = progress.activePartIndex
       this.chunkIndex = progress.nextChunkIndex
@@ -330,7 +333,7 @@ export class MediaRecorderController {
     )
     this.appendQueue = this.appendQueue
       .then(async () => {
-        if (this.appendFailure !== null) return
+        if (this.appendFailure !== null || this.durationLimitReached) return
         const meetingId = this.meetingId
         if (meetingId === null) return
         const bytes = new Uint8Array((await blob.arrayBuffer()).slice(0))
@@ -350,7 +353,8 @@ export class MediaRecorderController {
         if (progress.rollRequired) queueMicrotask(() => {
           void this.ensureRoll().catch((error: unknown) => this.handleRollFailure(error))
         })
-        if (progress.durationMs >= MAX_RECORDING_DURATION_MS) {
+        if (progress.maxReached || progress.durationMs >= MAX_RECORDING_DURATION_MS) {
+          this.durationLimitReached = true
           queueMicrotask(() => { void this.ensureAutomaticStop() })
         }
       })
@@ -468,6 +472,7 @@ export class MediaRecorderController {
     this.meetingId = null
     this.appendFailure = null
     this.automaticStopStarted = false
+    this.durationLimitReached = false
     this.state = 'idle'
     this.publish({
       phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,

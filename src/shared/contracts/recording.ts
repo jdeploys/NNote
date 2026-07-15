@@ -4,6 +4,7 @@ export const MAX_RECORDING_DURATION_MS = 2 * 60 * 60 * 1_000
 export interface RecordingProgress {
   totalBytes: number
   durationMs: number
+  maxReached?: boolean
   warn: boolean
   rollRequired?: boolean
   rolledToPartIndex: number | null

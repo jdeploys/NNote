@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
+import { strFromU8, unzipSync } from 'fflate'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -258,6 +259,33 @@ describe('RecoveryService', () => {
     await h.recovery.exportOnly('corrupt', exported)
     expect(readFileSync(exported)).toEqual(Buffer.from([4, 5, 6, 7]))
     expect(readFileSync(pending)).toEqual(Buffer.from([4, 5, 6, 7]))
+    h.database.close()
+  })
+
+  it('packages independent multi-part export-only WebMs without concatenating them', async () => {
+    const h = harness()
+    h.meetings.create(meeting('corrupt-multi', 'recording'))
+    const first = Buffer.from([1, 2, 3])
+    const second = Buffer.from([9, 8])
+    writeFileSync(completedPartPath(h.recordings, 'corrupt-multi', 0), first)
+    writeFileSync(pendingPartPath(h.recordings, 'corrupt-multi', 1), second)
+    writeFileSync(manifestPath(h.recordings, 'corrupt-multi'), '{ invalid')
+    await h.recovery.scan()
+
+    expect(await h.recovery.exportOnlyFormat('corrupt-multi')).toEqual({ partCount: 2, extension: 'zip' })
+    const destination = join(h.root, 'recovered.zip')
+    await h.recovery.exportOnly('corrupt-multi', destination)
+    const files = unzipSync(readFileSync(destination))
+    const manifest = JSON.parse(strFromU8(files['manifest.json']!))
+    expect(manifest).toEqual({
+      format: 'nnote-recovery', version: 1,
+      parts: [
+        { partIndex: 0, entry: 'audio/part-0.webm', byteCount: 3 },
+        { partIndex: 1, entry: 'audio/part-1.webm', byteCount: 2 },
+      ],
+    })
+    expect(files['audio/part-0.webm']).toEqual(new Uint8Array(first))
+    expect(files['audio/part-1.webm']).toEqual(new Uint8Array(second))
     h.database.close()
   })
 

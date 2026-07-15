@@ -12,6 +12,7 @@ import {
 } from '../../src/main/recording/recordingPaths'
 import { RecordingService } from '../../src/main/recording/recordingService'
 import { RECORDING_PART_LIMIT_BYTES } from '../../src/main/recording/recordingTypes'
+import { MAX_RECORDING_DURATION_MS } from '../../src/shared/contracts/recording'
 import { writeSessionManifest } from '../../src/main/recording/sessionManifest'
 import type { Meeting } from '../../src/shared/contracts/meeting'
 
@@ -54,6 +55,49 @@ afterEach(() => {
 })
 
 describe('RecordingService', () => {
+  it('clamps the final crossing chunk to two hours, preserves its bytes, and rejects later chunks', async () => {
+    const harness = createHarness('duration-crossing')
+    await harness.service.start('duration-crossing')
+    await harness.service.appendChunk({
+      meetingId: 'duration-crossing', partIndex: 0, chunkIndex: 0,
+      durationMs: MAX_RECORDING_DURATION_MS - 1, bytes: Uint8Array.from([1]),
+    })
+
+    const progress = await harness.service.appendChunk({
+      meetingId: 'duration-crossing', partIndex: 0, chunkIndex: 1,
+      durationMs: MAX_RECORDING_DURATION_MS + 9, bytes: Uint8Array.from([2, 3]),
+    })
+
+    expect(progress).toMatchObject({ durationMs: MAX_RECORDING_DURATION_MS, maxReached: true, nextChunkIndex: 2 })
+    const pending = pendingPartPath(harness.recordingsDirectory, 'duration-crossing', 0)
+    expect(readFileSync(pending)).toEqual(Buffer.from([1, 2, 3]))
+    await expect(harness.service.appendChunk({
+      meetingId: 'duration-crossing', partIndex: 0, chunkIndex: 2,
+      durationMs: MAX_RECORDING_DURATION_MS + 10, bytes: Uint8Array.from([4]),
+    })).rejects.toThrow(/two-hour duration limit/i)
+    expect(readFileSync(pending)).toEqual(Buffer.from([1, 2, 3]))
+
+    await harness.service.stop('duration-crossing')
+    expect(harness.repository.requireById('duration-crossing')).toMatchObject({
+      status: 'recorded', durationMs: MAX_RECORDING_DURATION_MS, audioByteCount: 3,
+    })
+    harness.database.close()
+  })
+
+  it('keeps exact two-hour and ordinary chunks unchanged', async () => {
+    const harness = createHarness('duration-exact')
+    await harness.service.start('duration-exact')
+    const ordinary = await harness.service.appendChunk({
+      meetingId: 'duration-exact', partIndex: 0, chunkIndex: 0, durationMs: 1_000, bytes: Uint8Array.from([1]),
+    })
+    const exact = await harness.service.appendChunk({
+      meetingId: 'duration-exact', partIndex: 0, chunkIndex: 1, durationMs: MAX_RECORDING_DURATION_MS, bytes: Uint8Array.from([2]),
+    })
+    expect(ordinary).toMatchObject({ durationMs: 1_000, maxReached: false })
+    expect(exact).toMatchObject({ durationMs: MAX_RECORDING_DURATION_MS, maxReached: true })
+    await harness.service.close()
+    harness.database.close()
+  })
   it('rolls back an active pristine Main session and is idempotent after deletion', async () => {
     const harness = createHarness('rollback-active')
     await harness.service.start('rollback-active')

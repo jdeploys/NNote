@@ -88,10 +88,6 @@ export class RecordingService {
     if (input.durationMs < manifest.durationMs) {
       throw new Error('Recording duration must not decrease')
     }
-    if (input.durationMs > MAX_RECORDING_DURATION_MS) {
-      throw new Error('Recording exceeds the two-hour duration limit')
-    }
-
     const currentPart = manifest.parts.find(({ partIndex }) => partIndex === input.partIndex)
     const expectedChunkIndex = (currentPart?.lastChunkIndex ?? -1) + 1
     if (input.chunkIndex < expectedChunkIndex) {
@@ -100,6 +96,10 @@ export class RecordingService {
     if (input.chunkIndex > expectedChunkIndex) {
       throw new Error(`Expected chunk index ${expectedChunkIndex}, received ${input.chunkIndex}`)
     }
+    if (manifest.durationMs >= MAX_RECORDING_DURATION_MS) {
+      throw new Error('Recording exceeds the two-hour duration limit')
+    }
+    const committedDurationMs = Math.min(input.durationMs, MAX_RECORDING_DURATION_MS)
 
     const part = currentPart ?? this.emptyPart(input.partIndex)
     const active = await this.openActivePart(input.meetingId, part)
@@ -113,7 +113,7 @@ export class RecordingService {
       ...part,
       lastChunkIndex: input.chunkIndex,
       byteCount: partBytes,
-      durationMs: input.durationMs,
+      durationMs: committedDurationMs,
       completed: false,
     }
     const parts = manifest.parts.filter(({ partIndex }) => partIndex !== input.partIndex)
@@ -123,13 +123,13 @@ export class RecordingService {
       ...manifest,
       activePartIndex: input.partIndex,
       totalBytes,
-      durationMs: input.durationMs,
+      durationMs: committedDurationMs,
       parts,
     }
 
     await writeSessionManifest(this.recordingsDirectory, nextManifest)
     this.sessions.set(input.meetingId, nextManifest)
-    this.meetings.updateRecordingProgress(input.meetingId, totalBytes, input.durationMs)
+    this.meetings.updateRecordingProgress(input.meetingId, totalBytes, committedDurationMs)
 
     return this.progress(nextManifest, null)
   }
@@ -317,6 +317,7 @@ export class RecordingService {
     return {
       totalBytes: manifest.totalBytes,
       durationMs: manifest.durationMs,
+      maxReached: manifest.durationMs >= MAX_RECORDING_DURATION_MS,
       warn: evaluateRecordingSize(activePartBytes).warn,
       rollRequired: evaluateRecordingSize(activePartBytes).rollPart,
       rolledToPartIndex,

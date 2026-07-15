@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RecordingApi } from '../../src/shared/contracts/recording'
+import { MAX_RECORDING_DURATION_MS, type RecordingApi } from '../../src/shared/contracts/recording'
 import {
   MediaRecorderController,
   RecordingTerminalError,
@@ -81,6 +81,32 @@ function createHarness() {
 }
 
 describe('MediaRecorderController', () => {
+  it('auto-stops successfully when Main clamps a crossing dataavailable chunk to two hours', async () => {
+    const automaticStop = vi.fn()
+    const harness = createHarness()
+    const recorder = new FakeMediaRecorder()
+    const snapshots: Array<{ phase: string }> = []
+    const controller = new MediaRecorderController(harness.recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [harness.track] }) as unknown as MediaStream),
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => MAX_RECORDING_DURATION_MS + 9,
+    }, { onAutomaticStop: automaticStop })
+    controller.subscribe((snapshot) => snapshots.push(snapshot))
+    vi.mocked(harness.recording.appendChunk).mockImplementationOnce(async () => ({
+        totalBytes: 3, durationMs: MAX_RECORDING_DURATION_MS, maxReached: true,
+        warn: false, rollRequired: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1,
+      })).mockRejectedValue(new Error('Recording exceeds the two-hour duration limit'))
+
+    await controller.start('meeting-1')
+    recorder.emit([1, 2])
+
+    await vi.waitFor(() => expect(harness.recording.stop).toHaveBeenCalledOnce())
+    expect(harness.recording.appendChunk).toHaveBeenCalledOnce()
+    expect(automaticStop).toHaveBeenCalledOnce()
+    expect(harness.recording.discard).not.toHaveBeenCalled()
+    expect(controller.getSnapshot()).toMatchObject({ phase: 'idle' })
+    expect(snapshots).not.toContainEqual(expect.objectContaining({ phase: 'failed' }))
+  })
   it('starts a fresh self-contained MediaRecorder after Main explicitly commits a full part', async () => {
     const track = new FakeTrack()
     const recorders: FakeMediaRecorder[] = []

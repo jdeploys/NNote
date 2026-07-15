@@ -1,5 +1,6 @@
 import { lstat, open, readdir, rename, rm, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { strToU8, zipSync } from 'fflate'
 import type { MeetingRepository } from '../db/meetingRepository'
 import type { RecoveryItem } from '../../shared/contracts/recovery'
 import type { RecordingProgress } from '../../shared/contracts/recording'
@@ -18,6 +19,7 @@ import {
 } from './sessionManifest'
 
 type RecoveryKind = RecoveryItem['kind']
+type PreservedPart = { entry: string; partIndex: number; pending: boolean }
 
 export class RecoveryService {
   private readonly inspected = new Map<string, RecoveryKind>()
@@ -108,22 +110,23 @@ export class RecoveryService {
     if (fromRoot === '' || (!fromRoot.startsWith('..') && !isAbsolute(fromRoot))) {
       throw new Error('Recovery export cannot overwrite preserved recording storage')
     }
-    const prefix = recordingFilePrefix(meetingId)
-    const entries = (await readdir(this.recordingsDirectory))
-      .filter((entry) => entry.startsWith(prefix) && (entry.endsWith('.webm') || entry.endsWith('.webm.part')))
-      .map((entry) => {
-        const match = entry.match(/\.part-(\d+)\.webm(?:\.part)?$/)
-        if (match === null) throw new Error('Preserved recording part has an invalid name')
-        return { entry, partIndex: Number(match[1]), pending: entry.endsWith('.webm.part') }
-      })
-      .sort((left, right) => left.partIndex - right.partIndex || Number(left.pending) - Number(right.pending))
-    if (entries.length === 0) throw new Error('No preserved recording bytes are available')
-    if (new Set(entries.map(({ partIndex }) => partIndex)).size !== entries.length) throw new Error('Preserved recording part topology is ambiguous')
+    const entries = await this.preservedParts(meetingId)
 
     const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`
     const output = await open(temporary, 'wx')
     try {
-      for (const { entry } of entries) {
+      if (entries.length > 1) {
+        const files: Record<string, Uint8Array> = {}
+        const parts: Array<{ partIndex: number; entry: string; byteCount: number }> = []
+        for (const part of entries) {
+          const bytes = await this.readStablePart(part)
+          const entry = `audio/part-${part.partIndex}.webm`
+          files[entry] = bytes
+          parts.push({ partIndex: part.partIndex, entry, byteCount: bytes.byteLength })
+        }
+        files['manifest.json'] = strToU8(JSON.stringify({ format: 'nnote-recovery', version: 1, parts }))
+        await output.writeFile(zipSync(files, { level: 0 }))
+      } else for (const { entry } of entries) {
         const source = join(this.recordingsDirectory, entry)
         const info = await lstat(source)
         if (!info.isFile() || info.isSymbolicLink()) throw new Error('Preserved recording part must be a regular file')
@@ -134,7 +137,7 @@ export class RecoveryService {
           while (position < info.size) {
             const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, info.size - position), position)
             if (bytesRead === 0) throw new Error('Preserved recording part changed during export')
-            await output.write(buffer.subarray(0, bytesRead))
+            await output.writeFile(buffer.subarray(0, bytesRead))
             position += bytesRead
           }
           if ((await input.stat()).size !== info.size) throw new Error('Preserved recording part changed during export')
@@ -148,6 +151,12 @@ export class RecoveryService {
       await rm(temporary, { force: true }).catch(() => undefined)
       throw error
     }
+  }
+
+  async exportOnlyFormat(meetingId: string): Promise<{ partCount: number; extension: 'webm' | 'zip' }> {
+    this.requireStartupRecovery(meetingId, 'exportOnly')
+    const parts = await this.preservedParts(meetingId)
+    return { partCount: parts.length, extension: parts.length === 1 ? 'webm' : 'zip' }
   }
 
   async discard(meetingId: string, options: { explicitDelete: boolean }): Promise<void> {
@@ -277,6 +286,39 @@ export class RecoveryService {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
       throw error
     }
+  }
+
+  private async preservedParts(meetingId: string): Promise<PreservedPart[]> {
+    const prefix = recordingFilePrefix(meetingId)
+    const entries = (await readdir(this.recordingsDirectory))
+      .filter((entry) => entry.startsWith(prefix) && (entry.endsWith('.webm') || entry.endsWith('.webm.part')))
+      .map((entry) => {
+        const match = entry.match(/\.part-(\d+)\.webm(?:\.part)?$/)
+        if (match === null) throw new Error('Preserved recording part has an invalid name')
+        return { entry, partIndex: Number(match[1]), pending: entry.endsWith('.webm.part') }
+      })
+      .sort((left, right) => left.partIndex - right.partIndex || Number(left.pending) - Number(right.pending))
+    if (entries.length === 0) throw new Error('No preserved recording bytes are available')
+    if (new Set(entries.map(({ partIndex }) => partIndex)).size !== entries.length) throw new Error('Preserved recording part topology is ambiguous')
+    return entries
+  }
+
+  private async readStablePart(part: PreservedPart): Promise<Uint8Array> {
+    const source = join(this.recordingsDirectory, part.entry)
+    const info = await lstat(source)
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Preserved recording part must be a regular file')
+    const input = await open(source, 'r')
+    try {
+      const bytes = new Uint8Array(info.size)
+      let position = 0
+      while (position < info.size) {
+        const { bytesRead } = await input.read(bytes, position, info.size - position, position)
+        if (bytesRead === 0) throw new Error('Preserved recording part changed during export')
+        position += bytesRead
+      }
+      if ((await input.stat()).size !== info.size) throw new Error('Preserved recording part changed during export')
+      return bytes
+    } finally { await input.close() }
   }
 
   private async fileSize(path: string): Promise<number | null> {
