@@ -75,4 +75,38 @@ describe('single-document meeting detail', () => {
     expect(preview).toHaveTextContent('근거를 검토했습니다.')
     expect(preview).not.toHaveTextContent('이 문구는 주요 논의가 아닙니다.')
   })
+
+  it('renders every custom section in order, all audio parts, processing, and export actions', async () => {
+    const user = userEvent.setup()
+    const source = documentFixture()
+    source.audioParts = [
+      { partIndex: 0, url: 'nnote-media://meeting/bWVldGluZy0x/part/0', byteCount: 5, durationMs: 30_000 },
+      { partIndex: 1, url: 'nnote-media://meeting/bWVldGluZy0x/part/1', byteCount: 5, durationMs: 35_000 },
+    ]
+    source.summarySections = [
+      { id: 'x', title: '위험 요소', meetingId: 'meeting-1', templateSectionId: '30000000-0000-4000-8000-000000000001', kind: 'bullet_list', text: '', items: ['일정'], orderIndex: 0 },
+      { id: 'y', title: '후속 조치', meetingId: 'meeting-1', templateSectionId: '30000000-0000-4000-8000-000000000002', kind: 'action_items', text: '', items: [], orderIndex: 1 },
+      { id: 'z', title: '결론', meetingId: 'meeting-1', templateSectionId: '30000000-0000-4000-8000-000000000003', kind: 'paragraph', text: '진행', items: [], orderIndex: 2 },
+    ]
+    const processing = {
+      getStatus: vi.fn(), process: vi.fn(async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null })), retry: vi.fn(), onProgress: vi.fn(() => () => undefined),
+    }
+    const archive = {
+      exportMeeting: vi.fn(async () => ({ status: 'success' as const, includedAudio: true, audioCoverage: 'all-parts' as const })),
+      exportMarkdown: vi.fn(async () => ({ status: 'success' as const })), importMeeting: vi.fn(),
+    }
+    render(<MeetingDetail document={source} initialProcessingStatus={{ meetingId: 'meeting-1', state: 'recorded', failedStage: null, retryable: false, audioRequired: true, error: null }} processing={processing} archive={archive} onRefresh={vi.fn()} onBack={vi.fn()} onRenameSpeaker={vi.fn()} />)
+
+    expect(screen.getAllByLabelText(/회의 오디오 파트/)).toHaveLength(2)
+    const headings = screen.getAllByRole('heading').map((node) => node.textContent)
+    expect(headings.indexOf('위험 요소')).toBeLessThan(headings.indexOf('후속 조치'))
+    expect(headings.indexOf('후속 조치')).toBeLessThan(headings.indexOf('결론'))
+    expect(screen.getAllByText(/초안 작성/)[0]).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '전사 및 요약 시작' }))
+    expect(processing.process).toHaveBeenCalledWith('meeting-1')
+    await user.click(screen.getByRole('button', { name: '.nnote 내보내기' }))
+    await user.click(screen.getByRole('button', { name: 'Markdown 내보내기' }))
+    expect(archive.exportMeeting).toHaveBeenCalledWith('meeting-1')
+    expect(archive.exportMarkdown).toHaveBeenCalledWith('meeting-1')
+  })
 })

@@ -20,7 +20,7 @@ interface MeetingIpcMain {
 
 type MeetingRepositoryPort = Pick<MeetingRepository,
   'listRecent' | 'create' | 'requireById' | 'listSpeakers' | 'listTranscript' |
-  'listSummarySections' | 'listActionItems' | 'renameSpeaker'>
+  'listSummarySections' | 'listActionItems' | 'renameSpeaker'> & Partial<Pick<MeetingRepository, 'listRecordingParts'>>
 type TemplateServicePort = Pick<TemplateService, 'get'>
 
 const SpeakerIdSchema = z.string().trim().min(1).max(200)
@@ -37,9 +37,14 @@ function getDocument(repository: MeetingRepositoryPort, templates: TemplateServi
   const publicMeeting = toPublicMeeting(meeting)
   const template = templates.get(meeting.selectedTemplateId ?? DEFAULT_TEMPLATE_ID)
   const sectionTitles = new Map(template.sections.map((section) => [section.id, section.title]))
+  const storedParts = repository.listRecordingParts?.(meeting.id) ?? []
+  const audioParts = storedParts.length > 0
+    ? storedParts.map((part) => ({ partIndex: part.partIndex, url: meetingMediaUrl(meeting.id, part.partIndex), byteCount: part.byteCount, durationMs: part.durationMs }))
+    : publicMeeting.hasAudio ? [{ partIndex: 0, url: meetingMediaUrl(meeting.id), byteCount: meeting.audioByteCount, durationMs: meeting.durationMs }] : []
   return MeetingDocumentSchema.parse({
     meeting: publicMeeting,
     audioUrl: publicMeeting.hasAudio ? meetingMediaUrl(meeting.id) : null,
+    audioParts,
     speakers: repository.listSpeakers(meeting.id),
     transcript: repository.listTranscript(meeting.id),
     summarySections: repository.listSummarySections(meeting.id).map((section) => ({

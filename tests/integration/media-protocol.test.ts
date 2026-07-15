@@ -33,14 +33,21 @@ function request(url: string, range?: string, method = 'GET'): Request {
 }
 
 describe('privileged local meeting audio protocol', () => {
-  it('streams only the repository-selected primary retained part', async () => {
+  it('streams every repository-owned part by canonical opaque meeting and part index', async () => {
     const h = await retainedMeeting()
     await writeFile(join(h.recordings, 'second.webm'), Uint8Array.from([9, 9, 9]))
+    h.meetings.replaceRecordingParts('meeting-1', [
+      { partIndex: 0, relativePath: 'first.webm', byteCount: 6, durationMs: 1 },
+      { partIndex: 1, relativePath: 'second.webm', byteCount: 3, durationMs: 1 },
+    ])
     const response = await createMediaResponse(request(meetingMediaUrl('meeting-1')), h.meetings, h.recordings)
     expect(response.status).toBe(200)
     expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0, 1, 2, 3, 4, 5])
     expect(response.headers.get('content-length')).toBe('6')
     expect(response.headers.get('accept-ranges')).toBe('bytes')
+    const second = await createMediaResponse(request(meetingMediaUrl('meeting-1', 1)), h.meetings, h.recordings)
+    expect([...new Uint8Array(await second.arrayBuffer())]).toEqual([9, 9, 9])
+    expect((await createMediaResponse(request(meetingMediaUrl('meeting-1', 2)), h.meetings, h.recordings)).status).toBe(404)
     h.database.close()
   })
 

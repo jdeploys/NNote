@@ -26,6 +26,12 @@ export type DocumentSummarySection = z.infer<typeof DocumentSummarySectionSchema
 export const MeetingDocumentSchema = z.object({
   meeting: PublicMeetingSchema,
   audioUrl: z.string().startsWith('nnote-media://meeting/').nullable(),
+  audioParts: z.array(z.object({
+    partIndex: z.number().int().nonnegative(),
+    url: z.string().startsWith('nnote-media://meeting/'),
+    byteCount: z.number().int().nonnegative(),
+    durationMs: z.number().int().nonnegative(),
+  }).strict()).optional(),
   speakers: z.array(SpeakerSchema),
   transcript: z.array(TranscriptSegmentSchema),
   summarySections: z.array(DocumentSummarySectionSchema),

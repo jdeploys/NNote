@@ -8,9 +8,10 @@
 
 | 대상 | 환경 | 결과 | 실제 신호 |
 |---|---|---:|---|
-| 단위·통합 테스트 | Windows 10.0.26200, Node 22.14.0, 로컬 | PASS | `npm test`: 37 files, 252 tests |
+| 단위·통합 테스트 | Windows 10.0.26200, Node 22.14.0, 로컬 | PASS | `npm test`: 38 files, 283 tests |
 | TypeScript / ESLint / build | Windows 10.0.26200, 로컬 | PASS | `npm run lint`, `npm run typecheck`, `npm run build`: exit 0 |
-| 실제 Electron E2E | Windows 10.0.26200, Electron 43.1.0, 로컬 | PASS | secure renderer, `Nnote` 제목, dashboard, Chromium fake WAV 녹음 후 `recorded`; 1/1 |
+| 실제 Electron E2E | Windows 10.0.26200, Electron 43.1.0, 로컬 | PASS | secure renderer, Chromium fake WAV 녹음 후 `recorded`, detail 처리/내보내기 및 dashboard 가져오기 동작 진입점; 1/1 |
+| Windows 시각 회귀 | Windows 10.0.26200, Chromium, 로컬 | PASS | dashboard 녹음 telemetry/일시정지/가져오기와 detail 처리/내보내기 포함 6/6 픽셀 비교 |
 | win-unpacked 런타임 | Windows 10.0.26200, 로컬 | PASS | `main/sqlite/keyring/preload/renderer` 모두 `true` |
 | Windows 설치 프로그램 | Windows 10.0.26200, 로컬 | PASS | `dist/Nnote Setup 0.1.0.exe` 생성; Authenticode `NotSigned` |
 | 릴리스 내용 allowlist | Windows 10.0.26200, 로컬 | PASS | ASAR에 `out`, package metadata, SQLite/Keyring 최소 native runtime만 존재; source map/recording/db/archive/env/app tests/src 없음 |

@@ -1,7 +1,6 @@
-import { lstat, readdir, realpath, rm } from 'node:fs/promises'
+import { lstat, realpath, rm } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import type { MeetingRepository, ProcessingAttempt, ProcessingStage } from '../db/meetingRepository'
-import { recordingFilePrefix } from '../recording/recordingPaths'
 import type { ProcessingStatus } from '../../shared/contracts/processing'
 import { PROCESS_OWNER_ID } from './processingOwner'
 
@@ -139,7 +138,13 @@ export class ProcessingService {
       for (const part of parts) {
         await this.files.remove(part.path)
         remainingBytes -= part.byteCount
-        if (!part.primary) this.meetings.updateAudioCleanupProgress(meetingId, remainingBytes)
+        const durable = this.meetings.listRecordingParts(meetingId)
+        if (durable.length > 0) {
+          const removed = durable.at(-1)
+          if (removed === undefined || removed.relativePath !== basename(part.path)) throw new Error('Recording cleanup order does not match durable metadata')
+          this.meetings.replaceRecordingParts(meetingId, durable.slice(0, -1).map(({ partIndex, relativePath, byteCount, durationMs }) => ({ partIndex, relativePath, byteCount, durationMs })))
+        }
+        this.meetings.updateAudioCleanupProgress(meetingId, remainingBytes)
       }
       this.meetings.completeAudioCleanup(meetingId, attempt.id)
       this.emit(this.getStatus(meetingId))
@@ -153,31 +158,33 @@ export class ProcessingService {
   private async trustedAudioPaths(
     meetingId: string,
     primaryRelativePath: string,
-  ): Promise<Array<{ path: string; byteCount: number; primary: boolean }>> {
+  ): Promise<Array<{ path: string; byteCount: number }>> {
     if (basename(primaryRelativePath) !== primaryRelativePath) throw new Error('Unsafe primary recording path')
-    const prefix = recordingFilePrefix(meetingId)
-    let names: string[]
-    try { names = await readdir(this.recordingsDirectory) } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    }
+    const stored = this.meetings.listRecordingParts(meetingId)
+    const durableParts = stored.length > 0
+      ? stored
+      : [{ meetingId, partIndex: 0, relativePath: primaryRelativePath, byteCount: this.meetings.requireById(meetingId).audioByteCount, durationMs: this.meetings.requireById(meetingId).durationMs }]
     const root = await realpath(this.recordingsDirectory)
-    const matches = names.filter((name) => name.startsWith(prefix) && /^part-\d+\.webm$/.test(name.slice(prefix.length)))
-    const paths: Array<{ path: string; byteCount: number; primary: boolean }> = []
-    for (const name of matches) {
-      const candidate = join(this.recordingsDirectory, name)
-      const details = await lstat(candidate)
+    const paths: Array<{ path: string; byteCount: number }> = []
+    for (const part of durableParts) {
+      if (basename(part.relativePath) !== part.relativePath) throw new Error('Unsafe recording path')
+      const candidate = join(this.recordingsDirectory, part.relativePath)
+      let details
+      try { details = await lstat(candidate) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          paths.push({ path: candidate, byteCount: part.byteCount })
+          continue
+        }
+        throw error
+      }
       if (details.isSymbolicLink() || !details.isFile()) throw new Error('Unsafe recording path')
+      if (details.size !== part.byteCount) throw new Error('Recording part size does not match durable metadata')
       const resolved = await realpath(candidate)
       const fromRoot = relative(root, resolved)
       if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) throw new Error('Unsafe recording path')
-      paths.push({ path: resolved, byteCount: details.size, primary: name === primaryRelativePath })
+      paths.push({ path: resolved, byteCount: details.size })
     }
-    return paths.sort((left, right) => {
-      if (left.primary) return 1
-      if (right.primary) return -1
-      return left.path.localeCompare(right.path)
-    })
+    return paths.reverse()
   }
 
   private emit(status: ProcessingStatus): void {

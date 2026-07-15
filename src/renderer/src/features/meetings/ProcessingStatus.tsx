@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ProcessingApi, ProcessingStatus as Status } from '../../../../shared/contracts/processing'
 
-export function ProcessingStatus({ meetingId, processing, initialStatus }: { meetingId: string; processing: ProcessingApi; initialStatus: Status }) {
+export function ProcessingStatus({ meetingId, processing, initialStatus, onStatusChange }: { meetingId: string; processing: ProcessingApi; initialStatus: Status; onStatusChange?(status: Status): void }) {
   const [status, setStatus] = useState(initialStatus)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -9,7 +9,7 @@ export function ProcessingStatus({ meetingId, processing, initialStatus }: { mee
   const requestGeneration = useRef(0)
   currentMeeting.current = meetingId
 
-  useEffect(() => processing.onProgress((next) => { if (next.meetingId === meetingId) setStatus(next) }), [meetingId, processing])
+  useEffect(() => processing.onProgress((next) => { if (next.meetingId === meetingId) { setStatus(next); onStatusChange?.(next) } }), [meetingId, onStatusChange, processing])
   useEffect(() => {
     requestGeneration.current += 1
     setStatus(initialStatus)
@@ -38,6 +38,7 @@ export function ProcessingStatus({ meetingId, processing, initialStatus }: { mee
       const next = status.failedStage === null ? await processing.process(meetingId) : await processing.retry(meetingId)
       if (currentMeeting.current === requestedMeeting && requestGeneration.current === generation) {
         setStatus(next)
+        onStatusChange?.(next)
       }
     } catch (cause) {
       if (currentMeeting.current === requestedMeeting && requestGeneration.current === generation) {

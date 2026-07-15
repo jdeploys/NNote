@@ -78,6 +78,7 @@ describe('RecoveryDialog', () => {
     const recovery = {
       scan: vi.fn(async () => [item]),
       recover: vi.fn(async () => ({ totalBytes: 1_024, durationMs: 65_000, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1 })),
+      suspend: vi.fn(), exportOnly: vi.fn(),
       keepAsFile: vi.fn(),
       discard: vi.fn(),
     }
@@ -86,7 +87,7 @@ describe('RecoveryDialog', () => {
       value: { recovery } as unknown as DesktopApi,
     })
 
-    render(<App />)
+    render(<App recordingController={{ start: vi.fn(), stop: vi.fn(), discard: vi.fn(), resumeRecovered: vi.fn(async () => undefined) }} />)
     expect(await screen.findByRole('dialog', { name: '중단된 녹음 복구' })).toBeInTheDocument()
     expect(document.querySelector('main')).not.toBeInTheDocument()
 

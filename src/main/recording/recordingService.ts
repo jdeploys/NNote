@@ -2,6 +2,9 @@ import { open, readdir, rename, rm, stat, type FileHandle } from 'node:fs/promis
 import { basename, join, relative } from 'node:path'
 import type { MeetingRepository } from '../db/meetingRepository'
 import {
+  MAX_RECORDING_DURATION_MS,
+} from '../../shared/contracts/recording'
+import {
   completedPartPath,
   manifestPath,
   pendingPartPath,
@@ -85,6 +88,9 @@ export class RecordingService {
     if (input.durationMs < manifest.durationMs) {
       throw new Error('Recording duration must not decrease')
     }
+    if (input.durationMs > MAX_RECORDING_DURATION_MS) {
+      throw new Error('Recording exceeds the two-hour duration limit')
+    }
 
     const currentPart = manifest.parts.find(({ partIndex }) => partIndex === input.partIndex)
     const expectedChunkIndex = (currentPart?.lastChunkIndex ?? -1) + 1
@@ -108,29 +114,49 @@ export class RecordingService {
       lastChunkIndex: input.chunkIndex,
       byteCount: partBytes,
       durationMs: input.durationMs,
-      completed: policy.rollPart,
+      completed: false,
     }
     const parts = manifest.parts.filter(({ partIndex }) => partIndex !== input.partIndex)
     parts.push(nextPart)
     parts.sort((left, right) => left.partIndex - right.partIndex)
     const nextManifest: SessionManifest = {
       ...manifest,
-      activePartIndex: policy.rollPart ? input.partIndex + 1 : input.partIndex,
+      activePartIndex: input.partIndex,
       totalBytes,
       durationMs: input.durationMs,
       parts,
-    }
-
-    if (policy.rollPart) {
-      await this.closeHandle(input.meetingId)
-      await this.finalizePart(input.meetingId, input.partIndex, partBytes)
     }
 
     await writeSessionManifest(this.recordingsDirectory, nextManifest)
     this.sessions.set(input.meetingId, nextManifest)
     this.meetings.updateRecordingProgress(input.meetingId, totalBytes, input.durationMs)
 
-    return this.progress(nextManifest, policy.rollPart ? input.partIndex + 1 : null)
+    return this.progress(nextManifest, null)
+  }
+
+  async rollPart(meetingId: string, partIndex: number): Promise<RecordingProgress> {
+    const manifest = this.requireSession(meetingId)
+    if (partIndex < manifest.activePartIndex) {
+      const completed = manifest.parts.find((part) => part.partIndex === partIndex && part.completed)
+      if (completed !== undefined) return this.progress(manifest, manifest.activePartIndex)
+    }
+    if (partIndex !== manifest.activePartIndex) {
+      throw new Error(`Expected active part ${manifest.activePartIndex}, received ${partIndex}`)
+    }
+    const part = manifest.parts.find((candidate) => candidate.partIndex === partIndex)
+    if (part === undefined || part.byteCount === 0) throw new Error('Cannot roll an empty recording part')
+    await this.closeHandle(meetingId)
+    await this.finalizePart(meetingId, partIndex, part.byteCount)
+    const nextManifest: SessionManifest = {
+      ...manifest,
+      activePartIndex: partIndex + 1,
+      parts: manifest.parts.map((candidate) => candidate.partIndex === partIndex
+        ? { ...candidate, completed: true }
+        : candidate),
+    }
+    await writeSessionManifest(this.recordingsDirectory, nextManifest)
+    this.sessions.set(meetingId, nextManifest)
+    return this.progress(nextManifest, partIndex + 1)
   }
 
   async pause(meetingId: string): Promise<void> {
@@ -140,6 +166,11 @@ export class RecordingService {
 
   async resume(meetingId: string): Promise<RecordingProgress> {
     return this.progress(this.requireSession(meetingId), null)
+  }
+
+  async suspendRecovery(meetingId: string): Promise<void> {
+    await this.closeHandle(meetingId)
+    this.sessions.delete(meetingId)
   }
 
   async stop(meetingId: string): Promise<void> {
@@ -167,6 +198,12 @@ export class RecordingService {
             this.recordingsDirectory,
             completedPartPath(this.recordingsDirectory, meetingId, manifest.parts[0].partIndex),
           )
+    const durableParts = completedManifest.parts.map((part) => ({
+      partIndex: part.partIndex,
+      relativePath: basename(completedPartPath(this.recordingsDirectory, meetingId, part.partIndex)),
+      byteCount: part.byteCount,
+      durationMs: part.durationMs,
+    }))
     const meeting = this.meetings.requireById(meetingId)
     if (meeting.status === 'recorded') {
       if (
@@ -177,12 +214,16 @@ export class RecordingService {
         throw new Error('Recorded meeting metadata does not match the recording session')
       }
     } else {
+      this.meetings.replaceRecordingParts(meetingId, durableParts)
       this.meetings.completeRecording(
         meetingId,
         manifest.totalBytes,
         manifest.durationMs,
         firstAudioPath,
       )
+    }
+    if (meeting.status === 'recorded' && this.meetings.listRecordingParts(meetingId).length === 0) {
+      this.meetings.replaceRecordingParts(meetingId, durableParts)
     }
     await rm(manifestPath(this.recordingsDirectory, meetingId), { force: true })
     this.sessions.delete(meetingId)
@@ -208,6 +249,7 @@ export class RecordingService {
     await rm(manifestPath(this.recordingsDirectory, meetingId), { force: true })
     await rm(temporaryManifestPath(this.recordingsDirectory, meetingId), { force: true })
     this.meetings.discardRecording(meetingId)
+    this.meetings.deleteRecordingParts(meetingId)
     this.sessions.delete(meetingId)
   }
 
@@ -276,6 +318,7 @@ export class RecordingService {
       totalBytes: manifest.totalBytes,
       durationMs: manifest.durationMs,
       warn: evaluateRecordingSize(activePartBytes).warn,
+      rollRequired: evaluateRecordingSize(activePartBytes).rollPart,
       rolledToPartIndex,
       activePartIndex: manifest.activePartIndex,
       nextChunkIndex: (activePart?.lastChunkIndex ?? -1) + 1,

@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
-import { lstat, readdir, realpath } from 'node:fs/promises'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { lstat, realpath } from 'node:fs/promises'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import type { Speaker, TranscriptSegment } from '../../shared/contracts/meeting'
 import type { MeetingRepository } from '../db/meetingRepository'
-import { recordingFilePrefix } from '../recording/recordingPaths'
 import type { OpenAiGatewayPort, ProviderTranscription } from './openAiGateway'
 import { safeOpenAiError, toOpenAiError } from './openAiErrors'
 import { PROCESS_OWNER_ID } from './processingOwner'
@@ -125,19 +124,13 @@ export class TranscriptionService {
   }
 
   private async finalizedPartPaths(meetingId: string): Promise<string[]> {
-    const prefix = recordingFilePrefix(meetingId)
     const resolvedRoot = await realpath(this.recordingsDirectory)
-    const parts = (await readdir(this.recordingsDirectory))
-      .map((name) => ({
-        name,
-        match: name.startsWith(prefix)
-          ? name.slice(prefix.length).match(/^part-(\d+)\.webm$/)
-          : null,
-      }))
-      .filter((entry): entry is { name: string; match: RegExpMatchArray } => entry.match !== null)
-      .map(({ name, match }) => ({ name, index: Number(match[1]) }))
-      .sort((left, right) => left.index - right.index)
-    if (parts.length === 0 || parts.some((part, index) => part.index !== index)) {
+    const meeting = this.meetings.requireById(meetingId)
+    const durable = this.meetings.listRecordingParts(meetingId)
+    const parts = durable.length > 0
+      ? durable.map((part) => ({ name: part.relativePath, index: part.partIndex }))
+      : meeting.audioPath === null ? [] : [{ name: meeting.audioPath, index: 0 }]
+    if (parts.length === 0 || parts.some((part, index) => part.index !== index || basename(part.name) !== part.name)) {
       throw safeOpenAiError('OPENAI_INVALID_AUDIO')
     }
     return Promise.all(

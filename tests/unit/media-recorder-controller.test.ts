@@ -81,6 +81,117 @@ function createHarness() {
 }
 
 describe('MediaRecorderController', () => {
+  it('starts a fresh self-contained MediaRecorder after Main explicitly commits a full part', async () => {
+    const track = new FakeTrack()
+    const recorders: FakeMediaRecorder[] = []
+    const appended: Array<{ partIndex: number; bytes: number[] }> = []
+    let rollRequired = true
+    const recording = {
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rollRequired: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+      cancelStart: vi.fn(async () => undefined),
+      appendChunk: vi.fn(async (input) => {
+        appended.push({ partIndex: input.partIndex, bytes: [...input.bytes] })
+        const shouldRoll = rollRequired
+        rollRequired = false
+        return { totalBytes: appended.reduce((sum, item) => sum + item.bytes.length, 0), durationMs: input.durationMs, warn: shouldRoll, rollRequired: shouldRoll, rolledToPartIndex: null, activePartIndex: input.partIndex, nextChunkIndex: input.chunkIndex + 1 }
+      }),
+      rollPart: vi.fn(async () => ({ totalBytes: 2, durationMs: 10_000, warn: false, rollRequired: false, rolledToPartIndex: 1, activePartIndex: 1, nextChunkIndex: 0 })),
+      pause: vi.fn(async () => undefined), resume: vi.fn(), stop: vi.fn(async () => undefined), discard: vi.fn(async () => undefined),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [track] }) as unknown as MediaStream),
+      createRecorder: () => {
+        const recorder = new FakeMediaRecorder()
+        recorders.push(recorder)
+        return recorder as unknown as MediaRecorder
+      },
+      now: () => 10_000,
+    })
+
+    await controller.start('meeting-1')
+    recorders[0]!.emit([0x1a, 0x45])
+    await vi.waitFor(() => expect(recording.rollPart).toHaveBeenCalledWith('meeting-1', 0))
+    await vi.waitFor(() => expect(recorders).toHaveLength(2))
+    recorders[1]!.emit([0x1a, 0x45, 0xdf])
+    await vi.waitFor(() => expect(recording.appendChunk).toHaveBeenCalledTimes(3))
+
+    expect(recorders[0]!.start).toHaveBeenCalledWith(10_000)
+    expect(recorders[1]!.start).toHaveBeenCalledWith(10_000)
+    expect(appended.at(-1)).toEqual({ partIndex: 1, bytes: [0x1a, 0x45, 0xdf] })
+    await controller.discard()
+  })
+
+  it('automatically stops at the exact two-hour recorded-duration boundary and publishes telemetry', async () => {
+    const track = new FakeTrack()
+    const recorder = new FakeMediaRecorder()
+    const stopped = vi.fn()
+    let clock = 0
+    const recording = {
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rollRequired: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+      cancelStart: vi.fn(async () => undefined),
+      appendChunk: vi.fn(async (input) => ({ totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: false, rollRequired: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: input.chunkIndex + 1 })),
+      rollPart: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(async () => undefined), discard: vi.fn(),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [track] }) as unknown as MediaStream),
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => clock,
+    }, { onAutomaticStop: stopped })
+    const snapshots: unknown[] = []
+    controller.subscribe((snapshot) => snapshots.push(snapshot))
+
+    await controller.start('meeting-1')
+    clock = 7_200_000
+    recorder.emit([1])
+    await vi.waitFor(() => expect(recording.stop).toHaveBeenCalledOnce())
+    expect(stopped).toHaveBeenCalledOnce()
+    expect(snapshots).toContainEqual(expect.objectContaining({ durationMs: 7_200_000, microphone: 'active', localSave: 'saved' }))
+  })
+
+  it('attaches recovered capture at the persisted next-part cursor without reopening old container bytes', async () => {
+    const recorder = new FakeMediaRecorder()
+    const recording = {
+      start: vi.fn(), cancelStart: vi.fn(), appendChunk: vi.fn(async (input) => ({ totalBytes: 9, durationMs: input.durationMs, warn: false, rollRequired: false, rolledToPartIndex: null, activePartIndex: 2, nextChunkIndex: 1 })),
+      rollPart: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), discard: vi.fn(async () => undefined),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [new FakeTrack()] }) as unknown as MediaStream),
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => 5_000,
+    })
+
+    await controller.resumeRecovered('meeting-1', { totalBytes: 8, durationMs: 5_000, warn: false, rollRequired: false, rolledToPartIndex: 2, activePartIndex: 2, nextChunkIndex: 0 })
+    recorder.emit([0x1a, 0x45])
+    await vi.waitFor(() => expect(recording.appendChunk).toHaveBeenCalledWith(expect.objectContaining({ partIndex: 2, chunkIndex: 0 })))
+    expect(recording.start).not.toHaveBeenCalled()
+    await controller.discard()
+  })
+
+  it('turns a failed explicit roll into a retryable Main stop without discarding saved bytes', async () => {
+    const track = new FakeTrack()
+    const recorder = new FakeMediaRecorder()
+    let first = true
+    const recording = {
+      start: vi.fn(async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 })),
+      cancelStart: vi.fn(),
+      appendChunk: vi.fn(async (input) => ({ totalBytes: input.bytes.byteLength, durationMs: input.durationMs, warn: first, rollRequired: first, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: input.chunkIndex + 1 })),
+      rollPart: vi.fn(async () => { first = false; throw new Error('manifest busy') }),
+      pause: vi.fn(), resume: vi.fn(), stop: vi.fn(async () => undefined), discard: vi.fn(),
+    } satisfies RecordingApi
+    const controller = new MediaRecorderController(recording, {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [track] }) as unknown as MediaStream),
+      createRecorder: () => recorder as unknown as MediaRecorder,
+      now: () => 10_000,
+    })
+    await controller.start('meeting-1')
+    recorder.emit([1])
+    await vi.waitFor(() => expect(controller.getSnapshot()).toMatchObject({ phase: 'failed', localSave: 'error' }))
+
+    await expect(controller.stop()).resolves.toBeUndefined()
+    expect(recording.stop).toHaveBeenCalledWith('meeting-1')
+    expect(recording.discard).not.toHaveBeenCalled()
+    expect(track.stop).toHaveBeenCalledOnce()
+  })
   it('serializes Opus chunks and waits for the final append before committing stop', async () => {
     const harness = createHarness()
     await harness.controller.start('meeting-1')

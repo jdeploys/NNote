@@ -590,6 +590,7 @@ export class MeetingRepository {
       if (meeting.status !== 'completed') throw new Error('Audio cleanup requires completed processing')
       this.database.prepare('UPDATE meetings SET audio_path = NULL, audio_byte_count = 0, updated_at = ? WHERE id = ?')
         .run(new Date().toISOString(), meetingId)
+      this.database.prepare('DELETE FROM recording_parts WHERE meeting_id = ?').run(meetingId)
       const result = this.database.prepare(
         `UPDATE processing_attempts SET finished_at = ?, succeeded = 1, sanitized_error = NULL
          WHERE id = ? AND meeting_id = ? AND stage = 'cleanup' AND finished_at IS NULL`,

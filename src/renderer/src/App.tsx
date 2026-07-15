@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DesktopApi } from '../../shared/contracts/desktopApi'
 import type { MeetingDocument, PublicMeeting } from '../../shared/contracts/meetingsApi'
 import type { RecoveryItem } from '../../shared/contracts/recovery'
+import type { ProcessingStatus as ProcessingStatusValue } from '../../shared/contracts/processing'
+import type { AudioPolicy } from '../../shared/contracts/meeting'
 import { Dashboard } from './features/meetings/Dashboard'
 import { MeetingDetail } from './features/meetings/MeetingDetail'
 import {
@@ -9,11 +11,12 @@ import {
   RecordingTerminalError,
 } from './features/recording/mediaRecorderController'
 import { RecoveryDialog } from './features/recording/RecoveryDialog'
+import { RecordingPanel } from './features/recording/RecordingPanel'
 import { ApiKeySettings } from './features/settings/ApiKeySettings'
 import { TemplateEditor } from './features/templates/TemplateEditor'
 
 type Screen = 'all' | 'templates' | 'settings' | 'detail'
-type RecordingControllerPort = Pick<MediaRecorderController, 'start' | 'stop' | 'discard'>
+type RecordingControllerPort = Pick<MediaRecorderController, 'start' | 'stop' | 'discard'> & Partial<Pick<MediaRecorderController, 'pause' | 'resume' | 'subscribe' | 'resumeRecovered'>>
 
 export function App({
   desktopApi = window.desktopApi,
@@ -25,6 +28,8 @@ export function App({
   const [recoveries, setRecoveries] = useState<RecoveryItem[] | null>(null)
   const [meetings, setMeetings] = useState<PublicMeeting[]>([])
   const [document, setDocument] = useState<MeetingDocument | null>(null)
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatusValue | null>(null)
+  const [recoveredActive, setRecoveredActive] = useState(false)
   const [screen, setScreen] = useState<Screen>('all')
   const [error, setError] = useState<string | null>(null)
   const routeHeading = useRef<HTMLHeadingElement>(null)
@@ -38,6 +43,19 @@ export function App({
     if (desktopApi.meetings === undefined) return
     setMeetings(await desktopApi.meetings.list())
   }, [desktopApi])
+
+  useEffect(() => {
+    if (controller.subscribe === undefined) return
+    let activeMeeting: string | null = null
+    return controller.subscribe((snapshot) => {
+      if (snapshot.meetingId !== null) activeMeeting = snapshot.meetingId
+      if (snapshot.phase === 'idle' && snapshot.meetingId === null && activeMeeting !== null) {
+        activeMeeting = null
+        setRecoveredActive(false)
+        void refreshMeetings()
+      }
+    })
+  }, [controller, refreshMeetings])
 
   useEffect(() => {
     let current = true
@@ -63,10 +81,10 @@ export function App({
   }, [screen, document])
 
   const recordingControls = useMemo(() => ({
-    start: async () => {
+    start: async (options?: { selectedTemplateId: string; audioPolicy: AudioPolicy }) => {
       const created = await desktopApi.meetings.createRecording({
         title: `새 회의 ${new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' }).format(new Date())}`,
-        audioPolicy: 'delete_after_processing', selectedTemplateId: 'default',
+        audioPolicy: options?.audioPolicy ?? 'delete_after_processing', selectedTemplateId: options?.selectedTemplateId ?? 'default',
       })
       try {
         await controller.start(created.id)
@@ -86,8 +104,11 @@ export function App({
       }
       await refreshMeetings()
     },
-    stop: async () => { await controller.stop(); await refreshMeetings() },
-    discard: async () => { await controller.discard(); await refreshMeetings() },
+    stop: async () => { await controller.stop(); setRecoveredActive(false); await refreshMeetings() },
+    discard: async () => { await controller.discard(); setRecoveredActive(false); await refreshMeetings() },
+    pause: async () => { await controller.pause?.() },
+    resume: async () => { await controller.resume?.() },
+    subscribe: controller.subscribe === undefined ? undefined : controller.subscribe.bind(controller),
   }), [controller, desktopApi, refreshMeetings])
 
   function navigate(destination: 'all' | 'templates' | 'settings', originFocusKey?: string) {
@@ -98,7 +119,11 @@ export function App({
   async function openMeeting(meetingId: string) {
     try {
       returnFocusKey.current = `meeting-${meetingId}`
-      setDocument(await desktopApi.meetings.get(meetingId))
+      const [nextDocument, nextStatus] = await Promise.all([
+        desktopApi.meetings.get(meetingId), desktopApi.processing.getStatus(meetingId),
+      ])
+      setDocument(nextDocument)
+      setProcessingStatus(nextStatus)
       setScreen('detail')
       setError(null)
     } catch (cause) {
@@ -107,28 +132,68 @@ export function App({
     }
   }
 
+  async function refreshOpenMeeting() {
+    if (document === null) return
+    const [nextDocument, nextStatus] = await Promise.all([
+      desktopApi.meetings.get(document.meeting.id), desktopApi.processing.getStatus(document.meeting.id),
+    ])
+    setDocument(nextDocument)
+    setProcessingStatus(nextStatus)
+    await refreshMeetings()
+  }
+
+  async function importMeeting() {
+    const result = await desktopApi.archive.importMeeting()
+    if (result.status === 'failure') { setError(result.message); return }
+    if (result.status === 'success' && result.meetingId !== undefined) {
+      await refreshMeetings()
+      await openMeeting(result.meetingId)
+    }
+  }
+
+  async function recoverCapture(meetingId: string) {
+    const progress = await desktopApi.recovery.recover(meetingId)
+    try {
+      if (controller.resumeRecovered === undefined) throw new Error('복구 녹음 연결을 지원하지 않습니다.')
+      await controller.resumeRecovered(meetingId, progress)
+      setRecoveredActive(true)
+    } catch (cause) {
+      await desktopApi.recovery.suspend(meetingId)
+      throw cause
+    }
+  }
+
   function backToAll() { setScreen('all') }
 
   if (error !== null) return <main className="document-shell" role="alert">복구 또는 기록 확인에 실패했습니다. 새 녹음을 시작하지 않았습니다: {error}</main>
   if (recoveries === null) return <main className="document-shell" aria-busy="true">복구 확인 중</main>
-  if (recoveries.length > 0) return <RecoveryDialog
-    items={recoveries}
-    recovery={desktopApi.recovery}
-    onResolved={(meetingId) => {
-      setRecoveries((items) => items?.filter((item) => item.meetingId !== meetingId) ?? [])
-      void refreshMeetings()
-    }}
-  />
+  if (recoveries.length > 0) return <>
+    <RecoveryDialog
+      items={recoveries}
+      recovery={desktopApi.recovery}
+      recoverDisabled={recoveredActive}
+      onRecover={recoverCapture}
+      onResolved={(meetingId) => {
+        setRecoveries((items) => items?.filter((item) => item.meetingId !== meetingId) ?? [])
+        void refreshMeetings()
+      }}
+    />
+    {recoveredActive && <RecordingPanel controls={recordingControls} templates={desktopApi.templates} onNavigate={() => undefined} />}
+  </>
 
   return <>
     <div hidden={screen !== 'all'}>
-      <Dashboard meetings={meetings} recordingControls={recordingControls} onOpenMeeting={(id) => void openMeeting(id)} onNavigate={navigate} />
+      <Dashboard meetings={meetings} recordingControls={recordingControls} templates={desktopApi.templates} onImport={() => void importMeeting()} onOpenMeeting={(id) => void openMeeting(id)} onNavigate={navigate} />
     </div>
     {screen === 'detail' && document !== null && <MeetingDetail
       document={document}
       headingRef={routeHeading}
       onBack={backToAll}
       onRenameSpeaker={desktopApi.meetings.renameSpeaker}
+      processing={desktopApi.processing}
+      initialProcessingStatus={processingStatus ?? undefined}
+      archive={desktopApi.archive}
+      onRefresh={refreshOpenMeeting}
     />}
     {screen === 'settings' && <main className="document-shell">
       <button className="back-button" onClick={backToAll}>← 전체 기록</button>

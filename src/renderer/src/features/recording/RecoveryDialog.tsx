@@ -5,12 +5,15 @@ interface RecoveryControls {
   recover(meetingId: string): Promise<unknown>
   keepAsFile(meetingId: string): Promise<unknown>
   discard(meetingId: string, options: { explicitDelete: true }): Promise<unknown>
+  exportOnly?(meetingId: string): Promise<{ status: 'success' | 'cancelled' | 'failure'; message?: string }>
 }
 
 interface RecoveryDialogProps {
   items: readonly RecoveryItem[]
   recovery: RecoveryControls
   onResolved(meetingId: string): void
+  onRecover?(meetingId: string): Promise<void>
+  recoverDisabled?: boolean
 }
 
 const destructiveStyle = { backgroundColor: '#b42318', color: '#ffffff' } as const
@@ -25,7 +28,7 @@ function formatBytes(byteCount: number): string {
   return `${Math.round(byteCount / 1_024)} KB`
 }
 
-export function RecoveryDialog({ items, recovery, onResolved }: RecoveryDialogProps) {
+export function RecoveryDialog({ items, recovery, onResolved, onRecover, recoverDisabled = false }: RecoveryDialogProps) {
   const [confirming, setConfirming] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,7 +38,10 @@ export function RecoveryDialog({ items, recovery, onResolved }: RecoveryDialogPr
     setBusy(true)
     setError(null)
     try {
-      if (action === 'recover') await recovery.recover(meetingId)
+      if (action === 'recover') {
+        if (onRecover === undefined) await recovery.recover(meetingId)
+        else await onRecover(meetingId)
+      }
       else if (action === 'keep') await recovery.keepAsFile(meetingId)
       else await recovery.discard(meetingId, { explicitDelete: true })
       setConfirming(null)
@@ -45,6 +51,17 @@ export function RecoveryDialog({ items, recovery, onResolved }: RecoveryDialogPr
     } finally {
       setBusy(false)
     }
+  }
+
+  const exportBytes = async (meetingId: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await recovery.exportOnly?.(meetingId)
+      if (result?.status === 'failure') setError(result.message ?? '보존 바이트를 내보내지 못했습니다.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '보존 바이트를 내보내지 못했습니다.')
+    } finally { setBusy(false) }
   }
 
   return (
@@ -57,11 +74,11 @@ export function RecoveryDialog({ items, recovery, onResolved }: RecoveryDialogPr
           <span>{formatDuration(item.durationMs)}</span>
           <span>{formatBytes(item.byteCount)}</span>
           {item.kind === 'exportOnly' ? (
-            <p>매니페스트를 읽을 수 없어 원본 바이트는 내보내기 전용으로 보존됩니다.</p>
+            <><p>매니페스트를 읽을 수 없어 원본 바이트는 내보내기 전용으로 보존됩니다.</p><button disabled={busy || confirming !== null} onClick={() => void exportBytes(item.meetingId)}>보존 바이트 내보내기</button></>
           ) : (
             <>
               {item.kind === 'recoverable' && (
-                <button disabled={busy || confirming !== null} onClick={() => void decide(item.meetingId, 'recover')}>복구</button>
+                <button disabled={recoverDisabled || busy || confirming !== null} onClick={() => void decide(item.meetingId, 'recover')}>복구</button>
               )}
               <button disabled={busy || confirming !== null} onClick={() => void decide(item.meetingId, 'keep')}>현재 파일로 보관</button>
             </>

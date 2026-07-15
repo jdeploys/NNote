@@ -7,30 +7,33 @@ interface ProtocolLike {
   handle(scheme: string, handler: (request: Request) => Response | Promise<Response>): void
 }
 
-type MeetingAudioRepository = Pick<MeetingRepository, 'findById'>
+type MeetingAudioRepository = Pick<MeetingRepository, 'findById' | 'listRecordingParts'>
 
 interface ByteRange { start: number; end: number }
 
 function notFound(): Response { return new Response(null, { status: 404 }) }
 
-function parseMeetingId(rawUrl: string): string | null {
-  const match = /^nnote-media:\/\/meeting\/([^/?#]+)$/.exec(rawUrl)
+function parseMeetingPart(rawUrl: string): { meetingId: string; partIndex: number } | null {
+  const match = /^nnote-media:\/\/meeting\/([^/?#]+)(?:\/part\/(\d+))?$/.exec(rawUrl)
   if (match === null) return null
   try {
     const token = decodeURIComponent(match[1])
     if (!/^[A-Za-z0-9_-]+$/.test(token)) return null
     const id = Buffer.from(token, 'base64url').toString('utf8')
-    return Buffer.from(id, 'utf8').toString('base64url') === token && /^[A-Za-z0-9_-]{1,200}$/.test(id)
-      ? id
+    const partIndex = match[2] === undefined ? 0 : Number(match[2])
+    return Buffer.from(id, 'utf8').toString('base64url') === token && /^[A-Za-z0-9_-]{1,200}$/.test(id) && Number.isSafeInteger(partIndex)
+      ? { meetingId: id, partIndex }
       : null
   } catch {
     return null
   }
 }
 
-export function meetingMediaUrl(meetingId: string): string {
+export function meetingMediaUrl(meetingId: string, partIndex = 0): string {
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(meetingId)) throw new Error('Meeting id must be opaque')
-  return `nnote-media://meeting/${Buffer.from(meetingId, 'utf8').toString('base64url')}`
+  if (!Number.isSafeInteger(partIndex) || partIndex < 0) throw new Error('Part index must be non-negative')
+  const base = `nnote-media://meeting/${Buffer.from(meetingId, 'utf8').toString('base64url')}`
+  return partIndex === 0 ? base : `${base}/part/${partIndex}`
 }
 
 function parseRange(value: string | null, size: number): ByteRange | null | 'invalid' {
@@ -94,14 +97,18 @@ export async function createMediaResponse(
   recordingsDirectory: string,
 ): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return notFound()
-  const meetingId = parseMeetingId(request.url)
-  if (meetingId === null) return notFound()
-  const meeting = meetings.findById(meetingId)
+  const selection = parseMeetingPart(request.url)
+  if (selection === null) return notFound()
+  const meeting = meetings.findById(selection.meetingId)
   if (meeting === null || meeting.status === 'deleted' || meeting.audioPath === null) return notFound()
-  if (isAbsolute(meeting.audioPath)) return notFound()
+  const durableParts = meetings.listRecordingParts(selection.meetingId)
+  const relativePath = durableParts.length === 0 && selection.partIndex === 0
+    ? meeting.audioPath
+    : durableParts.find((part) => part.partIndex === selection.partIndex)?.relativePath ?? null
+  if (relativePath === null || isAbsolute(relativePath)) return notFound()
 
   const root = resolve(recordingsDirectory)
-  const candidate = resolve(root, meeting.audioPath)
+  const candidate = resolve(root, relativePath)
   if (!withinRoot(root, candidate)) return notFound()
 
   let handle: FileHandle | null = null

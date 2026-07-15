@@ -1,4 +1,5 @@
 import type { PublicMeeting } from '../../../../shared/contracts/meetingsApi'
+import type { TemplatesApi } from '../../../../shared/contracts/template'
 import { RecordingPanel, type RecordingPanelControls } from '../recording/RecordingPanel'
 
 interface DashboardProps {
@@ -6,6 +7,8 @@ interface DashboardProps {
   recordingControls: RecordingPanelControls
   onOpenMeeting(meetingId: string): void
   onNavigate(destination: 'all' | 'templates' | 'settings', originFocusKey?: string): void
+  templates?: TemplatesApi
+  onImport?(): void
 }
 
 function formatDate(value: string): string {
@@ -18,7 +21,7 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNavigate }: DashboardProps) {
+export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNavigate, templates, onImport }: DashboardProps) {
   return <div className="app-shell">
     <header className="topbar">
       <button className="brand" type="button" onClick={() => onNavigate('all')} aria-label="Nnote 홈">Nnote</button>
@@ -26,6 +29,7 @@ export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNaviga
         <button type="button" onClick={() => onNavigate('all')}>전체 기록</button>
         <button type="button" data-focus-key="nav-templates" onClick={() => onNavigate('templates')}>요약 템플릿</button>
         <button type="button" data-focus-key="nav-settings" onClick={() => onNavigate('settings')}>설정</button>
+        {onImport !== undefined && <button type="button" onClick={onImport}>.nnote 가져오기</button>}
       </nav>
     </header>
     <main className="dashboard">
@@ -36,6 +40,7 @@ export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNaviga
         <p className="muted">노트북 마이크로 녹음하고 이 기기에 안전하게 저장합니다.</p>
         <RecordingPanel
           controls={recordingControls}
+          templates={templates}
           settingsFocusKey="recording-settings"
           onNavigate={() => onNavigate('settings', 'recording-settings')}
         />

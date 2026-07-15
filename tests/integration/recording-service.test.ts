@@ -242,6 +242,9 @@ describe('RecordingService', () => {
       audioByteCount: 2,
       durationMs: 1_000,
     })
+    expect(harness.repository.listRecordingParts('meeting-1')).toEqual([
+      expect.objectContaining({ partIndex: 0, byteCount: 2, durationMs: 1_000 }),
+    ])
     await expect(stat(manifestPath(harness.recordingsDirectory, 'meeting-1'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
@@ -322,7 +325,7 @@ describe('RecordingService', () => {
     harness.database.close()
   })
 
-  it('rolls one full part without immediately rolling the next part', async () => {
+  it('keeps a full part pending until renderer drains its recorder and explicitly rolls', async () => {
     const harness = createHarness()
     await harness.service.start('meeting-1')
 
@@ -333,6 +336,13 @@ describe('RecordingService', () => {
       durationMs: 1_000,
       bytes: new Uint8Array(RECORDING_PART_LIMIT_BYTES),
     })
+    expect(rolled).toMatchObject({ rollRequired: true, activePartIndex: 0, rolledToPartIndex: null })
+    expect(readFileSync(pendingPartPath(harness.recordingsDirectory, 'meeting-1', 0))).toHaveLength(
+      RECORDING_PART_LIMIT_BYTES,
+    )
+    await expect(stat(completedPartPath(harness.recordingsDirectory, 'meeting-1', 0))).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const advanced = await harness.service.rollPart('meeting-1', 0)
     const nextPart = await harness.service.appendChunk({
       meetingId: 'meeting-1',
       partIndex: 1,
@@ -341,7 +351,7 @@ describe('RecordingService', () => {
       bytes: Uint8Array.from([6]),
     })
 
-    expect(rolled.rolledToPartIndex).toBe(1)
+    expect(advanced).toMatchObject({ activePartIndex: 1, nextChunkIndex: 0, rolledToPartIndex: 1 })
     expect(nextPart).toMatchObject({
       totalBytes: RECORDING_PART_LIMIT_BYTES + 1,
       warn: false,
@@ -353,6 +363,22 @@ describe('RecordingService', () => {
     expect(readFileSync(pendingPartPath(harness.recordingsDirectory, 'meeting-1', 1))).toEqual(
       Buffer.from([6]),
     )
+    await harness.service.close()
+    harness.database.close()
+  })
+
+  it('accepts exactly two hours but rejects duration beyond the recording limit without writing', async () => {
+    const harness = createHarness()
+    await harness.service.start('meeting-1')
+    await expect(harness.service.appendChunk({
+      meetingId: 'meeting-1', partIndex: 0, chunkIndex: 0,
+      durationMs: 7_200_000, bytes: Uint8Array.from([1]),
+    })).resolves.toMatchObject({ durationMs: 7_200_000 })
+    await expect(harness.service.appendChunk({
+      meetingId: 'meeting-1', partIndex: 0, chunkIndex: 1,
+      durationMs: 7_200_001, bytes: Uint8Array.from([2]),
+    })).rejects.toThrow(/two.hour|2.hour|duration limit/i)
+    expect(readFileSync(pendingPartPath(harness.recordingsDirectory, 'meeting-1', 0))).toEqual(Buffer.from([1]))
     await harness.service.close()
     harness.database.close()
   })
@@ -459,7 +485,7 @@ describe('RecordingService', () => {
     const duplicate = await harness.service.appendChunk(boundaryChunk)
 
     expect(duplicate).toEqual(first)
-    expect(readFileSync(completedPartPath(harness.recordingsDirectory, 'meeting-1', 0))).toHaveLength(
+    expect(readFileSync(pendingPartPath(harness.recordingsDirectory, 'meeting-1', 0))).toHaveLength(
       RECORDING_PART_LIMIT_BYTES,
     )
     await harness.service.close()

@@ -24,6 +24,7 @@ const recording: DesktopApi['recording'] = Object.freeze({
   start: (meetingId: string) => ipcRenderer.invoke('recording:start', meetingId),
   cancelStart: (meetingId: string) => ipcRenderer.invoke('recording:cancel-start', meetingId),
   appendChunk: (chunk: RecordingChunk) => ipcRenderer.invoke('recording:append-chunk', chunk),
+  rollPart: (meetingId: string, partIndex: number) => ipcRenderer.invoke('recording:roll-part', meetingId, partIndex),
   pause: (meetingId: string) => ipcRenderer.invoke('recording:pause', meetingId),
   resume: (meetingId: string) => ipcRenderer.invoke('recording:resume', meetingId),
   stop: (meetingId: string) => ipcRenderer.invoke('recording:stop', meetingId),

@@ -1,6 +1,8 @@
 import {
+  MAX_RECORDING_DURATION_MS,
   RECORDING_MIME_TYPE,
   type RecordingApi,
+  type RecordingProgress,
 } from '../../../../shared/contracts/recording'
 
 const TIMESLICE_MS = 10_000
@@ -10,6 +12,22 @@ interface MediaRecorderDependencies {
   getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>
   createRecorder(stream: MediaStream, options: MediaRecorderOptions): MediaRecorder
   now(): number
+}
+
+export interface RecordingSnapshot {
+  phase: 'idle' | 'recording' | 'paused' | 'saving' | 'failed'
+  meetingId: string | null
+  durationMs: number
+  totalBytes: number
+  warn: boolean
+  activePartIndex: number
+  partCount: number
+  microphone: 'inactive' | 'active' | 'paused' | 'error'
+  localSave: 'idle' | 'saving' | 'saved' | 'error'
+}
+
+interface ControllerOptions {
+  onAutomaticStop?(): void
 }
 
 const defaultDependencies: MediaRecorderDependencies = {
@@ -37,6 +55,7 @@ type ControllerState =
   | 'starting'
   | 'recording'
   | 'paused'
+  | 'rolling'
   | 'stopping'
   | RecordingTerminalFailure
 
@@ -56,11 +75,27 @@ export class MediaRecorderController {
   private pausedDurationMs = 0
   private terminalMode: TerminalMode | null = null
   private terminalPromise: Promise<void> | null = null
+  private rollPromise: Promise<void> | null = null
+  private automaticStopStarted = false
+  private snapshot: RecordingSnapshot = {
+    phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,
+    activePartIndex: 0, partCount: 0, microphone: 'inactive', localSave: 'idle',
+  }
+  private readonly listeners = new Set<(snapshot: RecordingSnapshot) => void>()
 
   constructor(
     private readonly recording: RecordingApi,
     private readonly dependencies: MediaRecorderDependencies = defaultDependencies,
+    private readonly options: ControllerOptions = {},
   ) {}
+
+  subscribe(listener: (snapshot: RecordingSnapshot) => void): () => void {
+    this.listeners.add(listener)
+    listener(this.snapshot)
+    return () => this.listeners.delete(listener)
+  }
+
+  getSnapshot(): RecordingSnapshot { return this.snapshot }
 
   async start(meetingId: string): Promise<void> {
     if (this.state !== 'idle') throw new Error(`Recording is ${this.state}`)
@@ -76,19 +111,15 @@ export class MediaRecorderController {
       const progress = await this.recording.start(meetingId)
       mainSessionStarted = true
       this.meetingId = meetingId
-      const recorder = this.dependencies.createRecorder(this.stream, {
-        mimeType: RECORDING_MIME_TYPE,
-        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
-      })
-      this.recorder = recorder
       this.partIndex = progress.activePartIndex
       this.chunkIndex = progress.nextChunkIndex
       this.startedAt = this.dependencies.now() - progress.durationMs
       this.pausedAt = null
       this.pausedDurationMs = 0
-      recorder.addEventListener('dataavailable', this.onDataAvailable)
-      recorder.start(TIMESLICE_MS)
+      this.applyProgress(progress)
+      this.startRecorderPart()
       this.state = 'recording'
+      this.publish({ phase: 'recording', microphone: 'active', localSave: 'saved' })
     } catch (error) {
       this.cleanupCapture()
       if (mainSessionStarted) {
@@ -108,6 +139,32 @@ export class MediaRecorderController {
     }
   }
 
+  async resumeRecovered(meetingId: string, progress: RecordingProgress): Promise<void> {
+    if (this.state !== 'idle') throw new Error(`Recording is ${this.state}`)
+    this.state = 'starting'
+    try {
+      this.stream = await this.dependencies.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
+      this.appendQueue = Promise.resolve()
+      this.appendFailure = null
+      this.meetingId = meetingId
+      this.partIndex = progress.activePartIndex
+      this.chunkIndex = progress.nextChunkIndex
+      this.startedAt = this.dependencies.now() - progress.durationMs
+      this.pausedAt = null
+      this.pausedDurationMs = 0
+      this.applyProgress(progress)
+      this.startRecorderPart()
+      this.state = 'recording'
+      this.publish({ phase: 'recording', microphone: 'active', localSave: 'saved' })
+    } catch (error) {
+      this.cleanupCapture()
+      this.clearSession()
+      throw error
+    }
+  }
+
   async pause(): Promise<void> {
     if (this.state !== 'recording') throw new Error('Recording is not active')
     const { meetingId, recorder } = this.requireCapture()
@@ -117,6 +174,7 @@ export class MediaRecorderController {
     await this.appendQueue
     if (this.appendFailure !== null) throw this.appendFailure
     await this.recording.pause(meetingId)
+    this.publish({ phase: 'paused', microphone: 'paused', localSave: 'saved' })
   }
 
   async resume(): Promise<void> {
@@ -129,6 +187,7 @@ export class MediaRecorderController {
       this.pausedAt = null
     }
     this.state = 'recording'
+    this.publish({ phase: 'recording', microphone: 'active', localSave: 'saved' })
   }
 
   stop(): Promise<void> {
@@ -148,8 +207,10 @@ export class MediaRecorderController {
     }
 
     let operation: Promise<void>
-    if (this.state === 'recording' || this.state === 'paused') {
-      operation = this.finishCaptureAndApply(mode)
+    if (this.state === 'recording' || this.state === 'paused' || this.state === 'rolling') {
+      operation = this.rollPromise === null
+        ? this.finishCaptureAndApply(mode)
+        : this.rollPromise.then(() => this.finishCaptureAndApply(mode))
     } else if (mode === 'stop' && this.state === 'stop_failed') {
       operation = this.retryMainTerminal('stop')
     } else if (mode === 'discard' && this.state === 'discard_failed') {
@@ -182,6 +243,7 @@ export class MediaRecorderController {
   private async finishCaptureAndApply(mode: TerminalMode): Promise<void> {
     const { meetingId, recorder } = this.requireCapture()
     this.state = 'stopping'
+    this.publish({ phase: 'saving', localSave: 'saving' })
     try {
       let recorderStopError: unknown = null
       let resolveStop!: () => void
@@ -252,6 +314,7 @@ export class MediaRecorderController {
     } catch (error) {
       const failure = mode === 'stop' ? 'stop_failed' : 'discard_failed'
       this.state = failure
+      this.publish({ phase: 'failed', microphone: 'inactive', localSave: 'error' })
       throw new RecordingTerminalError(failure, `${mode} could not be completed`, { cause: error })
     }
   }
@@ -271,6 +334,7 @@ export class MediaRecorderController {
         const meetingId = this.meetingId
         if (meetingId === null) return
         const bytes = new Uint8Array((await blob.arrayBuffer()).slice(0))
+        this.publish({ localSave: 'saving' })
         const progress = await this.recording.appendChunk({
           meetingId,
           partIndex: this.partIndex,
@@ -281,10 +345,108 @@ export class MediaRecorderController {
         })
         this.partIndex = progress.activePartIndex
         this.chunkIndex = progress.nextChunkIndex
+        this.applyProgress(progress)
+        this.publish({ localSave: 'saved' })
+        if (progress.rollRequired) queueMicrotask(() => {
+          void this.ensureRoll().catch((error: unknown) => this.handleRollFailure(error))
+        })
+        if (progress.durationMs >= MAX_RECORDING_DURATION_MS) {
+          queueMicrotask(() => { void this.ensureAutomaticStop() })
+        }
       })
       .catch((error: unknown) => {
         this.appendFailure ??= error
+        this.publish({ phase: 'failed', localSave: 'error' })
       })
+  }
+
+  private ensureRoll(): Promise<void> {
+    if (this.rollPromise !== null) return this.rollPromise
+    if (this.state !== 'recording') return Promise.resolve()
+    const partIndex = this.partIndex
+    const operation = this.performRoll(partIndex).finally(() => {
+      if (this.rollPromise === operation) this.rollPromise = null
+    })
+    this.rollPromise = operation
+    return operation
+  }
+
+  private async performRoll(partIndex: number): Promise<void> {
+    const { meetingId, recorder } = this.requireCapture()
+    this.state = 'rolling'
+    this.publish({ phase: 'saving', localSave: 'saving' })
+    await this.stopRecorderAndDrain(recorder)
+    if (this.appendFailure !== null) {
+      this.state = 'capture_failed'
+      throw new RecordingTerminalError('capture_failed', 'A recording chunk could not be saved during part rollover', { cause: this.appendFailure })
+    }
+    if (this.recording.rollPart === undefined) throw new Error('Recording part rollover is unavailable')
+    const progress = await this.recording.rollPart(meetingId, partIndex)
+    this.partIndex = progress.activePartIndex
+    this.chunkIndex = progress.nextChunkIndex
+    this.applyProgress(progress)
+    this.startRecorderPart()
+    this.state = 'recording'
+    this.publish({ phase: 'recording', microphone: 'active', localSave: 'saved' })
+  }
+
+  private handleRollFailure(_error: unknown): void {
+    if (this.state === 'idle' || this.state === 'stopping') return
+    this.cleanupCapture()
+    this.state = 'stop_failed'
+    this.publish({ phase: 'failed', microphone: 'inactive', localSave: 'error' })
+    // Keep the Main session and meeting id so explicit stop retry can finalize durable bytes.
+  }
+
+  private async stopRecorderAndDrain(recorder: MediaRecorder): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const onStop = () => resolve()
+      recorder.addEventListener('stop', onStop, { once: true })
+      try { recorder.stop() } catch (error) {
+        recorder.removeEventListener('stop', onStop)
+        reject(error)
+      }
+    })
+    await this.appendQueue
+    recorder.removeEventListener('dataavailable', this.onDataAvailable)
+  }
+
+  private startRecorderPart(): void {
+    if (this.stream === null) throw new Error('No microphone stream is active')
+    const recorder = this.dependencies.createRecorder(this.stream, {
+      mimeType: RECORDING_MIME_TYPE,
+      audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+    })
+    this.recorder = recorder
+    recorder.addEventListener('dataavailable', this.onDataAvailable)
+    recorder.start(TIMESLICE_MS)
+  }
+
+  private async ensureAutomaticStop(): Promise<void> {
+    if (this.automaticStopStarted || (this.state !== 'recording' && this.state !== 'rolling')) return
+    this.automaticStopStarted = true
+    try {
+      await this.stop()
+      this.options.onAutomaticStop?.()
+    } catch {
+      // The terminal failure remains visible through the snapshot and can be retried explicitly.
+    }
+  }
+
+  private applyProgress(progress: RecordingProgress): void {
+    this.publish({
+      meetingId: this.meetingId,
+      durationMs: progress.durationMs,
+      totalBytes: progress.totalBytes,
+      warn: progress.warn,
+      activePartIndex: progress.activePartIndex,
+      partCount: progress.activePartIndex + 1,
+    })
+  }
+
+  private publish(patch: Partial<RecordingSnapshot>): void {
+    this.snapshot = { ...this.snapshot, ...patch }
+    for (const listener of this.listeners) listener(this.snapshot)
   }
 
   private requireCapture(): { meetingId: string; recorder: MediaRecorder } {
@@ -305,6 +467,11 @@ export class MediaRecorderController {
     this.cleanupCapture()
     this.meetingId = null
     this.appendFailure = null
+    this.automaticStopStarted = false
     this.state = 'idle'
+    this.publish({
+      phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,
+      activePartIndex: 0, partCount: 0, microphone: 'inactive', localSave: 'idle',
+    })
   }
 }

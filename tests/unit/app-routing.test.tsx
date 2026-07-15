@@ -23,12 +23,13 @@ function api(overrides: Partial<DesktopApi['meetings']> = {}): DesktopApi {
       ...overrides,
     } as DesktopApi['meetings'],
     settings: { getApiKeyStatus: vi.fn(async () => ({ configured: false, lastValidatedAt: null })), saveApiKey: vi.fn(), deleteApiKey: vi.fn() },
-    templates: { list: vi.fn(async () => []), create: vi.fn(), update: vi.fn(), reorderSections: vi.fn(), delete: vi.fn() },
+    templates: { list: vi.fn(async () => [{ id: 'default', name: '기본', isDefault: true, sections: [{ id: '10000000-0000-4000-8000-000000000001', title: '요약', kind: 'paragraph', prompt: '요약' }], createdAt: now, updatedAt: now }]), create: vi.fn(), update: vi.fn(), reorderSections: vi.fn(), delete: vi.fn() },
     recording: {
       start: vi.fn(), cancelStart: vi.fn(async () => undefined), appendChunk: vi.fn(), pause: vi.fn(),
       resume: vi.fn(), stop: vi.fn(), discard: vi.fn(),
     } as DesktopApi['recording'],
-    processing: { getStatus: vi.fn(), process: vi.fn(), retry: vi.fn(), onProgress: vi.fn(() => () => {}) },
+    processing: { getStatus: vi.fn(async (meetingId) => ({ meetingId, state: 'completed', failedStage: null, retryable: false, audioRequired: false, error: null })), process: vi.fn(), retry: vi.fn(), onProgress: vi.fn(() => () => {}) },
+    archive: { exportMeeting: vi.fn(), exportMarkdown: vi.fn(), importMeeting: vi.fn(async () => ({ status: 'cancelled' as const })) },
   } as unknown as DesktopApi
 }
 
@@ -122,5 +123,52 @@ describe('App route and recording ownership', () => {
     await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
     await user.click(screen.getByRole('button', { name: '요약 템플릿' }))
     expect(screen.getByRole('heading', { name: '요약 템플릿' })).toHaveFocus()
+  })
+
+  it('reaches recorded-to-processing from detail and refreshes the completed document', async () => {
+    const user = userEvent.setup()
+    const recorded = { ...meeting, status: 'recorded' as const }
+    const recordedDocument = { ...documentFixture, meeting: recorded }
+    const desktopApi = api({ list: vi.fn(async () => [recorded]), get: vi.fn(async () => recordedDocument) })
+    vi.mocked(desktopApi.processing.getStatus).mockResolvedValue({ meetingId: recorded.id, state: 'recorded', failedStage: null, retryable: false, audioRequired: true, error: null })
+    vi.mocked(desktopApi.processing.process).mockResolvedValue({ meetingId: recorded.id, state: 'completed', failedStage: null, retryable: false, audioRequired: false, error: null })
+    render(<App desktopApi={desktopApi} recordingController={{ start: vi.fn(), stop: vi.fn(), discard: vi.fn() }} />)
+
+    await user.click(await screen.findByRole('button', { name: /제품 회의/ }))
+    await user.click(await screen.findByRole('button', { name: '전사 및 요약 시작' }))
+    expect(desktopApi.processing.process).toHaveBeenCalledWith('meeting-1')
+    await waitFor(() => expect(desktopApi.meetings.get).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', { name: '.nnote 내보내기' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Markdown 내보내기' })).toBeVisible()
+  })
+
+  it('imports a .nnote from the dashboard and opens the imported meeting', async () => {
+    const user = userEvent.setup()
+    const imported = { ...meeting, id: 'imported-1', title: '가져온 회의' }
+    const desktopApi = api({ get: vi.fn(async () => ({ ...documentFixture, meeting: imported })) })
+    vi.mocked(desktopApi.archive.importMeeting).mockResolvedValue({ status: 'success', meetingId: imported.id, includedAudio: true, audioCoverage: 'all-parts' })
+    render(<App desktopApi={desktopApi} recordingController={{ start: vi.fn(), stop: vi.fn(), discard: vi.fn() }} />)
+    await user.click(await screen.findByRole('button', { name: '.nnote 가져오기' }))
+    expect(await screen.findByRole('heading', { name: '가져온 회의' })).toBeVisible()
+    expect(desktopApi.meetings.get).toHaveBeenCalledWith('imported-1')
+  })
+
+  it('rolls back a failed renderer recovery attachment and allows coherent retry', async () => {
+    const user = userEvent.setup()
+    const desktopApi = api()
+    vi.mocked(desktopApi.recovery.scan).mockResolvedValue([{ meetingId: 'recover-1', createdAt: now, durationMs: 1_000, byteCount: 3, kind: 'recoverable' }])
+    vi.mocked(desktopApi.recovery.recover).mockResolvedValue({ totalBytes: 3, durationMs: 1_000, warn: false, rollRequired: false, rolledToPartIndex: 1, activePartIndex: 1, nextChunkIndex: 0 })
+    const controller = {
+      start: vi.fn(), stop: vi.fn(), discard: vi.fn(),
+      resumeRecovered: vi.fn().mockRejectedValueOnce(new Error('microphone denied')).mockResolvedValueOnce(undefined),
+      subscribe: vi.fn((listener) => { listener({ phase: 'recording', meetingId: 'recover-1', durationMs: 1_000, totalBytes: 3, warn: false, activePartIndex: 1, partCount: 2, microphone: 'active', localSave: 'saved' }); return () => undefined }),
+    }
+    render(<App desktopApi={desktopApi} recordingController={controller as never} />)
+    await user.click(await screen.findByRole('button', { name: '복구' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('microphone denied')
+    expect(desktopApi.recovery.suspend).toHaveBeenCalledWith('recover-1')
+    await user.click(screen.getByRole('button', { name: '복구' }))
+    await waitFor(() => expect(controller.resumeRecovered).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('녹음 중')).toBeVisible()
   })
 })

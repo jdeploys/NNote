@@ -29,6 +29,10 @@ function harness(options: { policy?: AudioPolicy; status?: MeetingStatus; failSu
   })
   writeFileSync(first, 'abc')
   writeFileSync(second, 'def')
+  meetings.replaceRecordingParts('meeting-1', [
+    { partIndex: 0, relativePath: basename(first), byteCount: 3, durationMs: 500 },
+    { partIndex: 1, relativePath: basename(second), byteCount: 3, durationMs: 1_000 },
+  ])
   const transcribe = vi.fn(async () => {
     return meetings.completeTranscription(
       'meeting-1',

@@ -12,7 +12,7 @@ interface RecordingIpcMain {
 type RecordingServicePort = Pick<
   RecordingService,
   'start' | 'cancelStart' | 'appendChunk' | 'pause' | 'resume' | 'stop' | 'discard'
->
+> & { rollPart?(meetingId: string, partIndex: number): ReturnType<RecordingService['rollPart']> }
 
 const MeetingIdSchema = z.string().trim().min(1)
 const RecordingChunkSchema = z.object({
@@ -33,6 +33,10 @@ export function registerRecordingHandlers(
   ipcMain.handle('recording:append-chunk', async (_event, value) => {
     const { mimeType: _mimeType, ...chunk } = RecordingChunkSchema.parse(value)
     return service.appendChunk(chunk)
+  })
+  ipcMain.handle('recording:roll-part', (_event, meetingId, partIndex) => {
+    if (service.rollPart === undefined) throw new Error('Recording part rollover is unavailable')
+    return service.rollPart(MeetingIdSchema.parse(meetingId), z.number().int().nonnegative().parse(partIndex))
   })
   ipcMain.handle('recording:pause', (_event, meetingId) => service.pause(MeetingIdSchema.parse(meetingId)))
   ipcMain.handle('recording:resume', (_event, meetingId) => service.resume(MeetingIdSchema.parse(meetingId)))

@@ -115,4 +115,34 @@ describe('RecordingPanel', () => {
     await user.click(screen.getByRole('button', { name: '녹음 폐기 확인' }))
     expect(controls.discard).toHaveBeenCalledOnce()
   })
+
+  it('selects a summary template and retention policy and shows authoritative recording telemetry', async () => {
+    const user = userEvent.setup()
+    let listener: ((value: unknown) => void) | undefined
+    const controls = {
+      start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined), discard: vi.fn(async () => undefined),
+      pause: vi.fn(async () => undefined), resume: vi.fn(async () => undefined),
+      subscribe: vi.fn((next: (value: unknown) => void) => { listener = next; return () => undefined }),
+    }
+    const templates = {
+      list: vi.fn(async () => [
+        { id: 'default', name: '기본', isDefault: true, sections: [{ id: '10000000-0000-4000-8000-000000000001', title: '요약', kind: 'paragraph' as const, prompt: '요약' }], createdAt: '2026-07-14T00:00:00.000Z', updatedAt: '2026-07-14T00:00:00.000Z' },
+        { id: 'custom', name: '주간 회의', isDefault: false, sections: [{ id: '20000000-0000-4000-8000-000000000001', title: '결론', kind: 'bullet_list' as const, prompt: '결론' }], createdAt: '2026-07-14T00:00:00.000Z', updatedAt: '2026-07-14T00:00:00.000Z' },
+      ]), create: vi.fn(), update: vi.fn(), reorderSections: vi.fn(), delete: vi.fn(),
+    }
+    render(<RecordingPanel controls={controls as never} templates={templates} onNavigate={vi.fn()} />)
+    await user.selectOptions(await screen.findByLabelText('요약 템플릿'), 'custom')
+    await user.selectOptions(screen.getByLabelText('원본 오디오'), 'keep')
+    await user.click(screen.getByRole('button', { name: '녹음 시작' }))
+    expect(controls.start).toHaveBeenCalledWith({ selectedTemplateId: 'custom', audioPolicy: 'keep' })
+
+    listener?.({ phase: 'recording', meetingId: 'm1', durationMs: 65_000, totalBytes: 23 * 1024 * 1024, warn: true, activePartIndex: 1, partCount: 2, microphone: 'active', localSave: 'saved' })
+    expect(await screen.findByText('1:05')).toBeInTheDocument()
+    expect(screen.getByText('22 MiB를 넘어 새 파트 전환을 준비합니다.')).toBeInTheDocument()
+    expect(screen.getByText('마이크 연결됨')).toBeInTheDocument()
+    expect(screen.getByText('로컬 저장 완료')).toBeInTheDocument()
+    expect(screen.getByText('파트 2')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '일시정지' }))
+    expect(controls.pause).toHaveBeenCalledOnce()
+  })
 })

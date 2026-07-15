@@ -37,4 +37,27 @@ describe('TemplateEditor', () => {
     expect(screen.queryByLabelText('템플릿 이름')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '삭제' })).not.toBeInTheDocument()
   })
+
+  it('adds edits and removes custom sections while preserving one-to-eight validation', async () => {
+    const user = userEvent.setup()
+    const custom = { ...defaultTemplate, id: 'custom', name: '사용자', isDefault: false as const }
+    const api = {
+      list: vi.fn().mockResolvedValue([custom]), create: vi.fn(),
+      update: vi.fn(async (_id, input) => ({ ...custom, sections: input.sections ?? custom.sections })),
+      reorderSections: vi.fn(), delete: vi.fn(),
+    } satisfies TemplatesApi
+    render(<TemplateEditor templates={api} />)
+    await screen.findByLabelText('섹션 1 제목')
+    await user.clear(screen.getByLabelText('섹션 1 제목'))
+    await user.type(screen.getByLabelText('섹션 1 제목'), '결론')
+    await user.selectOptions(screen.getByLabelText('섹션 1 종류'), 'bullet_list')
+    await user.clear(screen.getByLabelText('섹션 1 지시문'))
+    await user.type(screen.getByLabelText('섹션 1 지시문'), '결론을 목록으로 정리하세요.')
+    await user.click(screen.getByRole('button', { name: '섹션 추가' }))
+    expect(screen.getByLabelText('섹션 2 제목')).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: '섹션 제거' })[1]!)
+    await user.click(screen.getByRole('button', { name: '섹션 저장' }))
+    expect(api.update).toHaveBeenCalledWith('custom', { sections: [expect.objectContaining({ title: '결론', kind: 'bullet_list', prompt: '결론을 목록으로 정리하세요.' })] })
+    expect(screen.getByRole('button', { name: '섹션 제거' })).toBeDisabled()
+  })
 })

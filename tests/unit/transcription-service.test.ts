@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openDatabase } from '../../src/main/db/database'
 import { MeetingRepository } from '../../src/main/db/meetingRepository'
@@ -29,7 +29,7 @@ function harness(status: Meeting['status'] = 'recorded') {
     durationMs: 12_000,
     status,
     audioPolicy: 'delete_after_processing',
-    audioPath: 'first-part.webm',
+    audioPath: basename(completedPartPath(recordingsDirectory, 'meeting-1', 0)),
     audioByteCount: 6,
     selectedTemplateId: null,
   })
@@ -216,6 +216,10 @@ describe('TranscriptionService', () => {
     const first = completedPartPath(h.recordingsDirectory, 'meeting-1', 0)
     writeFileSync(second, Buffer.from([2, 2, 2]))
     writeFileSync(first, Buffer.from([1, 1, 1]))
+    h.meetings.replaceRecordingParts('meeting-1', [
+      { partIndex: 0, relativePath: basename(first), byteCount: 3, durationMs: 6_000 },
+      { partIndex: 1, relativePath: basename(second), byteCount: 3, durationMs: 12_000 },
+    ])
     const requests: Array<{ filePath: string; model: string; responseFormat: string; chunkingStrategy: string }> = []
     const gateway = {
       async transcribe(request: (typeof requests)[number]) {
@@ -282,7 +286,7 @@ describe('TranscriptionService', () => {
 
     await expect(new TranscriptionService(h.meetings, gateway, h.recordingsDirectory).transcribeMeeting('meeting-1')).rejects.toMatchObject({ code: 'OPENAI_RATE_LIMITED' })
 
-    expect(h.meetings.requireById('meeting-1')).toMatchObject({ status: 'failed', audioPath: 'first-part.webm', audioByteCount: 6 })
+    expect(h.meetings.requireById('meeting-1')).toMatchObject({ status: 'failed', audioPath: basename(completedPartPath(h.recordingsDirectory, 'meeting-1', 0)), audioByteCount: 6 })
     expect(h.meetings.listTranscript('meeting-1')[0]?.text).toBe('Existing transcript')
     expect(h.database.prepare('SELECT content_json FROM summary_sections WHERE meeting_id = ?').get('meeting-1')).toEqual({ content_json: JSON.stringify({ text: 'Existing summary' }) })
     const attempt = h.database.prepare('SELECT stage, sanitized_error FROM processing_attempts WHERE meeting_id = ? ORDER BY rowid DESC LIMIT 1').get('meeting-1') as { stage: string; sanitized_error: string }

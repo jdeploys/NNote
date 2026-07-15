@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { SummaryTemplate, TemplatesApi } from '../../../../shared/contracts/template'
+import type { SummaryTemplate, SummaryTemplateSection, TemplateSectionKind, TemplatesApi } from '../../../../shared/contracts/template'
 
 interface TemplateEditorProps {
   templates: TemplatesApi
@@ -10,6 +10,7 @@ export function TemplateEditor({ templates: api }: TemplateEditorProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [sections, setSections] = useState<SummaryTemplateSection[]>([])
   const selected = items.find(({ id }) => id === selectedId) ?? items[0]
 
   useEffect(() => {
@@ -22,7 +23,10 @@ export function TemplateEditor({ templates: api }: TemplateEditorProps) {
     return () => { active = false }
   }, [api])
 
-  useEffect(() => setName(selected?.name ?? ''), [selected?.id, selected?.name])
+  useEffect(() => {
+    setName(selected?.name ?? '')
+    setSections(selected?.sections ?? [])
+  }, [selected?.id, selected?.name, selected?.sections])
 
   async function saveName() {
     if (!selected || selected.isDefault) return
@@ -38,12 +42,13 @@ export function TemplateEditor({ templates: api }: TemplateEditorProps) {
   async function moveSection(index: number, direction: -1 | 1) {
     if (!selected || selected.isDefault) return
     const target = index + direction
-    if (target < 0 || target >= selected.sections.length) return
-    const ids = selected.sections.map(({ id }) => id)
+    if (target < 0 || target >= sections.length) return
+    const ids = sections.map(({ id }) => id)
     ;[ids[index], ids[target]] = [ids[target]!, ids[index]!]
     try {
       const updated = await api.reorderSections(selected.id, ids)
       setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setSections(updated.sections)
     } catch {
       setError('섹션 순서를 저장하지 못했습니다.')
     }
@@ -59,6 +64,33 @@ export function TemplateEditor({ templates: api }: TemplateEditorProps) {
       setSelectedId(created.id)
     } catch {
       setError('템플릿을 만들지 못했습니다.')
+    }
+  }
+
+  function updateSection(index: number, patch: Partial<SummaryTemplateSection>) {
+    setSections((current) => current.map((section, position) => position === index ? { ...section, ...patch } : section))
+  }
+
+  function addSection() {
+    if (sections.length >= 8) return
+    setSections((current) => [...current, {
+      id: crypto.randomUUID(), title: '새 섹션', kind: 'paragraph', prompt: '이 섹션을 작성하세요.',
+    }])
+  }
+
+  function removeSection(index: number) {
+    if (sections.length <= 1) return
+    setSections((current) => current.filter((_section, position) => position !== index))
+  }
+
+  async function saveSections() {
+    if (!selected || selected.isDefault) return
+    try {
+      const updated = await api.update(selected.id, { sections })
+      setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setError(null)
+    } catch {
+      setError('템플릿 섹션을 저장하지 못했습니다.')
     }
   }
 
@@ -83,11 +115,16 @@ export function TemplateEditor({ templates: api }: TemplateEditorProps) {
     {selected?.isDefault ? <p>기본 템플릿은 수정하거나 삭제할 수 없습니다.</p> : selected ? <div>
       <label>템플릿 이름 <input aria-label="템플릿 이름" value={name} onChange={(event) => setName(event.target.value)} /></label>
       <button type="button" onClick={saveName}>이름 저장</button>
-      <ol>{selected.sections.map((section, index) => <li key={section.id}>
-        <span>{section.title}</span>
+      <ol>{sections.map((section, index) => <li key={section.id}>
+        <label>섹션 {index + 1} 제목 <input aria-label={`섹션 ${index + 1} 제목`} value={section.title} onChange={(event) => updateSection(index, { title: event.target.value })} /></label>
+        <label>종류 <select aria-label={`섹션 ${index + 1} 종류`} value={section.kind} onChange={(event) => updateSection(index, { kind: event.target.value as TemplateSectionKind })}><option value="paragraph">문단</option><option value="bullet_list">목록</option><option value="action_items">할 일</option></select></label>
+        <label>지시문 <textarea aria-label={`섹션 ${index + 1} 지시문`} value={section.prompt} onChange={(event) => updateSection(index, { prompt: event.target.value })} /></label>
         <button type="button" aria-label="위로 이동" disabled={index === 0} onClick={() => moveSection(index, -1)}>↑</button>
-        <button type="button" aria-label="아래로 이동" disabled={index === selected.sections.length - 1} onClick={() => moveSection(index, 1)}>↓</button>
+        <button type="button" aria-label="아래로 이동" disabled={index === sections.length - 1} onClick={() => moveSection(index, 1)}>↓</button>
+        <button type="button" aria-label="섹션 제거" disabled={sections.length <= 1} onClick={() => removeSection(index)}>제거</button>
       </li>)}</ol>
+      <button type="button" disabled={sections.length >= 8} onClick={addSection}>섹션 추가</button>
+      <button type="button" onClick={() => void saveSections()}>섹션 저장</button>
       <button type="button" onClick={deleteTemplate}>삭제</button>
     </div> : null}
   </section>
