@@ -12,12 +12,12 @@ function fail(component, detail = '') {
 function resolveExecutable(packagePath) {
   const absolute = resolve(packagePath)
   if (process.platform === 'win32') {
-    const direct = join(absolute, 'Nnote.exe')
+    const direct = join(absolute, 'Mineloa.exe')
     if (existsSync(direct)) return direct
   }
   if (process.platform === 'darwin') {
-    const appPath = absolute.endsWith('.app') ? absolute : join(absolute, 'Nnote.app')
-    const executable = join(appPath, 'Contents', 'MacOS', 'Nnote')
+    const appPath = absolute.endsWith('.app') ? absolute : join(absolute, 'Mineloa.app')
+    const executable = join(appPath, 'Contents', 'MacOS', 'Mineloa')
     if (existsSync(executable)) return executable
   }
   fail('executable', basename(absolute))

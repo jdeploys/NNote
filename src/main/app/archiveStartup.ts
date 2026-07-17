@@ -13,7 +13,7 @@ export async function bootstrapAfterImportRecovery(dependencies: ArchiveStartupD
   } catch {
     try {
       dependencies.dialog.showErrorBox(
-        'Nnote 가져오기 복구 필요',
+        'Mineloa 가져오기 복구 필요',
         '완료되지 않은 가져오기 기록을 안전하게 복구하지 못했습니다. 파일은 보존되었습니다.',
       )
     } finally {

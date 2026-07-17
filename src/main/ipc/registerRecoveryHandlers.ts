@@ -26,7 +26,7 @@ export function registerRecoveryHandlers(ipcMain: RecoveryIpcMain, service: Reco
       const selected = await dialog.showSaveDialog({
         title: '복구 오디오 내보내기', defaultPath: `recovered-recording.${format.extension}`,
         filters: [isPackage
-          ? { name: 'Nnote recovery package', extensions: ['zip'] }
+          ? { name: 'Mineloa recovery package', extensions: ['zip'] }
           : { name: 'WebM audio', extensions: ['webm'] }],
       })
       if (selected.canceled || selected.filePath === undefined) return { status: 'cancelled' }

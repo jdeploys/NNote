@@ -17,7 +17,7 @@ test('launches the real built app securely and records fake microphone audio', a
   })
   try {
     const window = await app.firstWindow()
-    await expect(window).toHaveTitle('Nnote')
+    await expect(window).toHaveTitle('Mineloa')
     expect(await window.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined')
     await expect(window.getByRole('heading', { name: '새 회의' })).toBeVisible()
     await expect(window.getByRole('button', { name: '.nnote 가져오기' })).toBeVisible()
@@ -39,8 +39,9 @@ test('launches the real built app securely and records fake microphone audio', a
       theme: expect.stringMatching(/light|dark/),
       background: expect.not.stringMatching(/rgba\(0, 0, 0, 0\)|transparent/),
     })
-    await expect(window.getByRole('button', { name: '전체 기록', exact: true })).toBeVisible()
-    await window.getByRole('button', { name: '전체 기록', exact: true }).click()
+    const primaryNavigation = window.getByRole('navigation', { name: '주요 메뉴' })
+    await expect(primaryNavigation.getByRole('button', { name: '전체 기록', exact: true })).toBeVisible()
+    await primaryNavigation.getByRole('button', { name: '전체 기록', exact: true }).click()
     await expect(window.getByRole('heading', { name: '새 회의' })).toBeInViewport()
 
     await window.getByRole('button', { name: '녹음 시작' }).click()

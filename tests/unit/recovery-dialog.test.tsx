@@ -98,6 +98,6 @@ describe('RecoveryDialog', () => {
     expect(document.querySelector('main')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '복구' }))
-    expect(await screen.findByRole('main')).toHaveTextContent('Nnote')
+    expect(await screen.findByRole('main')).toHaveTextContent('Mineloa')
   })
 })

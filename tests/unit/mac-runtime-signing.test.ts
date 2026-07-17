@@ -14,7 +14,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 async function fixture() {
   const appOutDir = await realpath(await mkdtemp(join(tmpdir(), 'nnote-sign-order-')))
   roots.push(appOutDir)
-  const runtime = join(appOutDir, 'Nnote.app', 'Contents', 'Resources', 'local-runtime', 'darwin-arm64')
+  const runtime = join(appOutDir, 'Mineloa.app', 'Contents', 'Resources', 'local-runtime', 'darwin-arm64')
   await mkdir(runtime, { recursive: true })
   await Promise.all([
     writeFile(join(runtime, 'whisper-cli'), 'whisper-unsigned', { mode: 0o755 }),
@@ -29,7 +29,7 @@ async function fixture() {
 
 const context = (appOutDir: string, codeSigningInfo?: { value: Promise<{ keychainFile?: string | null }> }) => ({
   electronPlatformName: 'darwin', appOutDir,
-  packager: { appInfo: { productFilename: 'Nnote' }, ...(codeSigningInfo && { codeSigningInfo }) },
+  packager: { appInfo: { productFilename: 'Mineloa' }, ...(codeSigningInfo && { codeSigningInfo }) },
 })
 
 describe('macOS local runtime signing order', () => {
@@ -110,7 +110,7 @@ describe('macOS local runtime signing order', () => {
       expect(args).toEqual(expect.arrayContaining(['--sign', '-']))
     }
     expect(signApplication).toHaveBeenCalledWith(expect.objectContaining({
-      app: join(target.appOutDir, 'Nnote.app'),
+      app: join(target.appOutDir, 'Mineloa.app'),
       identity: '-',
       identityValidation: false,
       ignore: expect.any(Function),
@@ -118,7 +118,7 @@ describe('macOS local runtime signing order', () => {
     const ignore = signApplication.mock.calls[0][0].ignore as (path: string) => boolean
     expect(ignore(join(target.runtime, 'whisper-cli'))).toBe(true)
     expect(ignore(join(target.runtime, 'ffmpeg'))).toBe(true)
-    expect(ignore(join(target.appOutDir, 'Nnote.app', 'Contents', 'Frameworks', 'Electron Framework.framework'))).toBe(false)
+    expect(ignore(join(target.appOutDir, 'Mineloa.app', 'Contents', 'Frameworks', 'Electron Framework.framework'))).toBe(false)
   })
 
   it('refuses to replace a linked packaged manifest', async (testContext) => {
@@ -143,7 +143,7 @@ describe('macOS local runtime signing order', () => {
     const hook = createAfterSignHook({ run, signingConfigured: () => false })
     await hook(context(target.appOutDir))
     expect(run).toHaveBeenCalledWith('codesign', [
-      '--force', '--sign', '-', join(target.appOutDir, 'Nnote.app'),
+      '--force', '--sign', '-', join(target.appOutDir, 'Mineloa.app'),
     ])
     expect(run.mock.calls.flat().join(' ')).not.toContain('--deep')
   })

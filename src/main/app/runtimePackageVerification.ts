@@ -268,7 +268,7 @@ export async function collectRuntimeVerificationSignals(
     throw failure('renderer', cause)
   }
   if (!renderer.desktopApiAvailable) throw failure('preload')
-  if (renderer.title !== 'Nnote' || !renderer.dashboardVisible) throw failure('renderer')
+  if (renderer.title !== 'Mineloa' || !renderer.dashboardVisible) throw failure('renderer')
 
   return { main: true, sqlite: true, keyring: true, localRuntime: true, preload: true, renderer: true }
 }
@@ -311,7 +311,7 @@ export async function runPackageRuntimeVerification(resultPath: string): Promise
         }
       },
       checkKeyring: () => {
-        const entry = new Entry('Nnote Runtime Verification', 'module-load-only')
+        const entry = new Entry('Mineloa Runtime Verification', 'module-load-only')
         return typeof entry.getPassword === 'function'
       },
       checkLocalRuntime: () => verifyLocalRuntimePayload({

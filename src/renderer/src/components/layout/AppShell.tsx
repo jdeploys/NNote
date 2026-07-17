@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Icon, type IconName } from '../ui/Icon'
+import { BrandMark } from '../ui/BrandMark'
 
 type PrimaryScreen = 'all' | 'templates' | 'settings'
 
@@ -27,9 +28,10 @@ export function AppShell({
           className="brand"
           type="button"
           onClick={() => onNavigate('all')}
-          aria-label="Nnote 홈"
+          aria-label="Mineloa 홈"
         >
-          Nnote
+          <BrandMark />
+          <span>Mineloa</span>
         </button>
         <nav className="app-nav" aria-label="주요 메뉴">
           {entries.map(([value, label, icon]) => (

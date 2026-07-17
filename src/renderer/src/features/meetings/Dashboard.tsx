@@ -41,7 +41,7 @@ function statusIcon(status: PublicMeeting['status']): IconName {
 
 export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNavigate, templates }: DashboardProps) {
   return <main className="dashboard page-container">
-      <span className="visually-hidden">Nnote</span>
+      <span className="visually-hidden">Mineloa</span>
       <SurfaceCard className="new-meeting-card" labelledBy="new-meeting-heading">
         <header className="card-heading">
           <p className="eyebrow">NEW MEETING</p>

@@ -69,7 +69,7 @@ export async function readBoundedArchiveFile(
 
 function failure(code: 'EXPORT_FAILED' | 'IMPORT_FAILED' | 'INVALID_ARCHIVE', error: unknown): ArchiveOperationResult {
   void error
-  const message = code === 'EXPORT_FAILED' ? '내보내지 못했습니다.' : '선택한 Nnote 파일을 가져오지 못했습니다.'
+  const message = code === 'EXPORT_FAILED' ? '내보내지 못했습니다.' : '선택한 Mineloa 파일을 가져오지 못했습니다.'
   return { status: 'failure', code, message }
 }
 
@@ -86,7 +86,7 @@ export function registerArchiveHandlers(
       const meetingId = MeetingIdSchema.parse(rawMeetingId)
       const meeting = repository.requireById(meetingId)
       assertExportableStatus(meeting.status)
-      const selected = await dialog.showSaveDialog({ title: 'Nnote 내보내기', defaultPath: `${meeting.title}.nnote`, filters: [{ name: 'Nnote', extensions: ['nnote'] }] })
+      const selected = await dialog.showSaveDialog({ title: 'Mineloa 내보내기', defaultPath: `${meeting.title}.nnote`, filters: [{ name: 'Mineloa', extensions: ['nnote'] }] })
       if (selected.canceled || selected.filePath === undefined) return { status: 'cancelled' }
       const result = await exportMeetingArchive(meetingId, repository, templates, recordingsDirectory)
       await atomicWrite(selected.filePath, result.bytes)
@@ -115,7 +115,7 @@ export function registerArchiveHandlers(
 
   ipcMain.handle('archive:import-meeting', async () => {
     try {
-      const selected = await dialog.showOpenDialog({ title: 'Nnote 가져오기', properties: ['openFile'], filters: [{ name: 'Nnote', extensions: ['nnote'] }] })
+      const selected = await dialog.showOpenDialog({ title: 'Mineloa 가져오기', properties: ['openFile'], filters: [{ name: 'Mineloa', extensions: ['nnote'] }] })
       if (selected.canceled || selected.filePaths.length !== 1) return { status: 'cancelled' }
       const result = await importMeetingArchive(await readBoundedArchiveFile(selected.filePaths[0]), database, recordingsDirectory)
       return { status: 'success', meetingId: result.meetingId, includedAudio: result.importedAudio }

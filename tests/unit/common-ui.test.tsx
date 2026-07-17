@@ -157,7 +157,10 @@ describe('common UI semantics', () => {
     for (const name of ['전체 기록', '요약 템플릿', '설정', '.nnote 가져오기']) {
       expect(within(navigation).getByRole('button', { name }).querySelector('.ui-icon')).toBeVisible()
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Nnote 홈' }))
+    const brand = screen.getByRole('button', { name: 'Mineloa 홈' })
+    expect(brand).toHaveTextContent('Mineloa')
+    expect(brand.querySelector('.brand-mark')).toHaveAttribute('aria-hidden', 'true')
+    fireEvent.click(brand)
     fireEvent.click(within(navigation).getByRole('button', { name: '.nnote 가져오기' }))
     expect(onNavigate).toHaveBeenCalledWith('all')
     expect(onImport).toHaveBeenCalledOnce()

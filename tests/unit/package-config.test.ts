@@ -20,11 +20,13 @@ describe('release package configuration', () => {
   const manifest = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
 
   it('uses the public desktop identity and native dependency rebuild', () => {
+    expect(manifest.name).toBe('mineloa')
     expect(manifest.build).toMatchObject({
-      appId: 'com.jdeploys.nnote',
-      productName: 'Nnote',
+      appId: 'com.jdeploys.mineloa',
+      productName: 'Mineloa',
       npmRebuild: true,
     })
+    expect(manifest.build.artifactName).toBe('${productName}-${version}-${os}-${arch}.${ext}')
     expect(manifest.build.win.target).toEqual(expect.arrayContaining(['nsis', 'dir']))
     expect(manifest.build.mac.target).toEqual(expect.arrayContaining(['dmg', 'dir']))
   })
@@ -39,6 +41,12 @@ describe('release package configuration', () => {
       '!**/*.sqlite',
       '!**/.env*',
     ]))
+  })
+
+  it('keeps the existing .nnote archive format during the public rebrand', () => {
+    expect(manifest.build.files).toContain('!**/*.nnote')
+    expect(readFileSync(resolve('src/main/ipc/registerArchiveHandlers.ts'), 'utf8'))
+      .toContain("extensions: ['nnote']")
   })
 
   it('defines the exact 0.0.1 cross-platform prerelease contract', () => {

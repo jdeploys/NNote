@@ -61,7 +61,7 @@ describe('recovery IPC', () => {
 
     expect(await handlers.get('recovery:export-only')!({}, 'meeting-1')).toEqual({ status: 'success' })
     expect(dialog.showSaveDialog).toHaveBeenCalledWith(expect.objectContaining({
-      defaultPath: 'recovered-recording.zip', filters: [{ name: 'Nnote recovery package', extensions: ['zip'] }],
+      defaultPath: 'recovered-recording.zip', filters: [{ name: 'Mineloa recovery package', extensions: ['zip'] }],
     }))
     expect(exportOnly).toHaveBeenCalledWith('meeting-1', 'C:\\trusted\\recovered.zip')
   })

@@ -180,8 +180,8 @@ describe('processing provider settings visible outcomes', () => {
     const section = screen.getByRole('region', { name: 'Codex CLI 상태' })
     const text = section.textContent ?? ''
     expect(screen.getByRole('note', { name: '클라우드 처리' })).toBeVisible()
-    expect(screen.getByText('Nnote는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.')).toHaveClass('field-help')
-    expect(text.indexOf('Nnote는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.')).toBeLessThan(text.indexOf('전사문이 Codex 계정으로 전송됩니다.'))
+    expect(screen.getByText('Mineloa는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.')).toHaveClass('field-help')
+    expect(text.indexOf('Mineloa는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.')).toBeLessThan(text.indexOf('전사문이 Codex 계정으로 전송됩니다.'))
     expect(text.indexOf('전사문이 Codex 계정으로 전송됩니다.')).toBeLessThan(text.indexOf('Codex CLI 설정이 올바르지 않습니다.'))
     expect(text.indexOf('Codex CLI 설정이 올바르지 않습니다.')).toBeLessThan(text.indexOf('Codex CLI 문제 해결'))
   })

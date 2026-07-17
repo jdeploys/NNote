@@ -44,7 +44,7 @@ jobs:
           node scripts/verify-package.mjs dist/win-unpacked | Tee-Object package-verification.log
           Select-String -LiteralPath package-verification.log -SimpleMatch '"localRuntime":true'
       - name: Normalize release asset
-        run: node scripts/prepare-release-assets.mjs .exe Nnote-0.0.1-windows-x64.exe
+        run: node scripts/prepare-release-assets.mjs .exe Mineloa-0.0.1-windows-x64.exe
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: diagnostics-windows-x64
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows-x64
-          path: release-assets/Nnote-0.0.1-windows-x64.exe
+          path: release-assets/Mineloa-0.0.1-windows-x64.exe
           if-no-files-found: error
 
   macos:
@@ -66,10 +66,10 @@ jobs:
         include:
           - arch: x64
             runner: macos-15-intel
-            app-dir: dist/mac/Nnote.app
+            app-dir: dist/mac/Mineloa.app
           - arch: arm64
             runner: macos-15
-            app-dir: dist/mac-arm64/Nnote.app
+            app-dir: dist/mac-arm64/Mineloa.app
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           runtime="${{ matrix.app-dir }}/Contents/Resources/local-runtime/darwin-${{ matrix.arch }}"
-          file "${{ matrix.app-dir }}/Contents/MacOS/Nnote" "$runtime/whisper-cli" "$runtime/ffmpeg" | tee signature-diagnostics.log
+          file "${{ matrix.app-dir }}/Contents/MacOS/Mineloa" "$runtime/whisper-cli" "$runtime/ffmpeg" | tee signature-diagnostics.log
           expected_arch="${{ matrix.arch }}"
           [[ "$expected_arch" == x64 ]] && expected_arch=x86_64
           grep -E "whisper-cli:[[:space:]]+Mach-O 64-bit executable ${expected_arch}$" signature-diagnostics.log
@@ -152,7 +152,7 @@ jobs:
             echo 'AD-HOC SIGNED; UNNOTARIZED (no complete signing/notarization credentials configured)' | tee -a signature-diagnostics.log
           fi
       - name: Normalize release asset
-        run: node scripts/prepare-release-assets.mjs .dmg Nnote-0.0.1-macos-${{ matrix.arch }}.dmg
+        run: node scripts/prepare-release-assets.mjs .dmg Mineloa-0.0.1-macos-${{ matrix.arch }}.dmg
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: diagnostics-macos-${{ matrix.arch }}
@@ -168,7 +168,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-macos-${{ matrix.arch }}
-          path: release-assets/Nnote-0.0.1-macos-${{ matrix.arch }}.dmg
+          path: release-assets/Mineloa-0.0.1-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
   release:
@@ -187,13 +187,13 @@ jobs:
       - name: Verify complete asset set and checksums
         working-directory: release-assets
         run: |
-          test -f Nnote-0.0.1-windows-x64.exe
-          test -f Nnote-0.0.1-macos-x64.dmg
-          test -f Nnote-0.0.1-macos-arm64.dmg
-          sha256sum Nnote-0.0.1-windows-x64.exe Nnote-0.0.1-macos-x64.dmg Nnote-0.0.1-macos-arm64.dmg > SHA256SUMS.txt
+          test -f Mineloa-0.0.1-windows-x64.exe
+          test -f Mineloa-0.0.1-macos-x64.dmg
+          test -f Mineloa-0.0.1-macos-arm64.dmg
+          sha256sum Mineloa-0.0.1-windows-x64.exe Mineloa-0.0.1-macos-x64.dmg Mineloa-0.0.1-macos-arm64.dmg > SHA256SUMS.txt
       - name: Replace existing prerelease assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload v0.0.1 --clobber release-assets/Nnote-0.0.1-windows-x64.exe release-assets/Nnote-0.0.1-macos-x64.dmg release-assets/Nnote-0.0.1-macos-arm64.dmg release-assets/SHA256SUMS.txt --repo "${{ github.repository }}"
-          gh release edit v0.0.1 --repo "${{ github.repository }}" --prerelease --title "Nnote 0.0.1" --notes "Nnote desktop prerelease. macOS signing and notarization diagnostics are available as workflow artifacts, not attached release assets; Gatekeeper may warn for unnotarized builds."
+          gh release upload v0.0.1 --clobber release-assets/Mineloa-0.0.1-windows-x64.exe release-assets/Mineloa-0.0.1-macos-x64.dmg release-assets/Mineloa-0.0.1-macos-arm64.dmg release-assets/SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release edit v0.0.1 --repo "${{ github.repository }}" --prerelease --title "Mineloa 0.0.1" --notes "Mineloa desktop prerelease. macOS signing and notarization diagnostics are available as workflow artifacts, not attached release assets; Gatekeeper may warn for unnotarized builds."

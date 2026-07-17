@@ -139,7 +139,7 @@ describe('packaged runtime verification', () => {
       checkSqlite: () => ({ value: 1, close }),
       checkKeyring: () => true,
       checkLocalRuntime: async () => ({ whisper: true, ffmpeg: true, notices: true }),
-      checkRenderer: async () => ({ title: 'Nnote', desktopApiAvailable: true, dashboardVisible: true }),
+      checkRenderer: async () => ({ title: 'Mineloa', desktopApiAvailable: true, dashboardVisible: true }),
     })
 
     expect(signals).toEqual({

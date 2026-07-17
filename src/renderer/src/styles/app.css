@@ -1,6 +1,7 @@
 .app-shell { min-height: 100vh; background: var(--canvas); }
 .topbar { position: sticky; top: 0; z-index: 10; min-height: 64px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-1) 92%, transparent); display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 8px 32px; backdrop-filter: blur(16px); }
-.brand { min-height: 48px; border: 0; background: transparent; color: var(--ink); padding: 8px 0; font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
+.brand { min-height: 48px; border: 0; background: transparent; color: var(--ink); padding: 6px 0; display: inline-flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
+.brand-mark { width: 30px; height: 30px; flex: 0 0 auto; }
 .app-nav { display: flex; align-items: center; gap: 4px; }
 .app-nav button { min-height: 48px; border-color: transparent; background: transparent; color: var(--ink-subtle); display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; }
 .app-nav button:hover:not(:disabled), .app-nav button[aria-current='page'] { background: var(--surface-2); color: var(--ink); }

@@ -1,8 +1,8 @@
 {
-  "name": "nnote",
+  "name": "mineloa",
   "version": "0.0.1",
   "private": true,
-  "description": "Secure desktop meeting recorder",
+  "description": "Private desktop meeting recorder and summarizer",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -24,8 +24,8 @@
     "verify:win": "node scripts/verify-package.mjs dist/win-unpacked"
   },
   "build": {
-    "appId": "com.jdeploys.nnote",
-    "productName": "Nnote",
+    "appId": "com.jdeploys.mineloa",
+    "productName": "Mineloa",
     "npmRebuild": true,
     "asar": true,
     "afterPack": "scripts/after-pack.mjs",
@@ -94,7 +94,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Nnote needs microphone access to record meetings locally on this Mac."
+        "NSMicrophoneUsageDescription": "Mineloa needs microphone access to record meetings locally on this Mac."
       }
     },
     "nsis": {

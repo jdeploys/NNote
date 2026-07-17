@@ -37,6 +37,10 @@ import { WhisperModelManager } from './localModels/whisperModelManager'
 import { publishWhisperProgressToLiveWindows } from './window/publishWhisperProgress'
 import { LocalWhisperTranscriptionAdapter } from './ai/providers/localWhisperTranscriptionAdapter'
 import { resolveLocalRuntimePaths } from './localRuntime/runtimePaths'
+import {
+  legacyUserDataDirectory,
+  shouldUseLegacyUserDataDirectory,
+} from './app/userDataCompatibility'
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'nnote-media',
@@ -47,7 +51,11 @@ const verificationRequest = parsePackageVerificationRequest(process.argv)
 
 if (verificationRequest !== null) {
   app.whenReady().then(() => runPackageRuntimeVerification(verificationRequest.resultPath))
-} else startSingleInstanceApp(app, BrowserWindow, () => {
+} else {
+  if (shouldUseLegacyUserDataDirectory(process.argv)) {
+    app.setPath('userData', legacyUserDataDirectory(app.getPath('appData')))
+  }
+  startSingleInstanceApp(app, BrowserWindow, () => {
   app.whenReady().then(async () => {
     const userDataDirectory = app.getPath('userData')
     const database = openDatabase(join(userDataDirectory, 'nnote.sqlite'))
@@ -137,4 +145,5 @@ if (verificationRequest !== null) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
-})
+  })
+}

@@ -210,7 +210,7 @@ export function App({
       <Dashboard meetings={meetings} recordingControls={recordingControls} templates={desktopApi.templates} onOpenMeeting={(id) => void openMeeting(id)} onNavigate={navigate} />
     </div>
     {screen === 'settings' && <main className="page-container settings-page">
-      <PageHeader ref={routeHeading} eyebrow="SETTINGS" title="설정" description="Nnote가 기록과 AI 처리를 사용하는 방식을 관리합니다." backLabel="전체 기록" onBack={backToAll} />
+      <PageHeader ref={routeHeading} eyebrow="SETTINGS" title="설정" description="Mineloa가 기록과 AI 처리를 사용하는 방식을 관리합니다." backLabel="전체 기록" onBack={backToAll} />
       <AppearanceSettings preference={preference} onChange={setPreference} />
       <ApiKeySettings settings={desktopApi.settings} />
       <ProcessingProviderSettings settings={desktopApi.settings} />

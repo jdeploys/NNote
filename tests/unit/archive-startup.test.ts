@@ -10,7 +10,7 @@ describe('archive import startup recovery', () => {
       reconcile: vi.fn(async () => { throw error }), start,
     })
     expect(result).toBe(false)
-    expect(showErrorBox).toHaveBeenCalledWith('Nnote 가져오기 복구 필요', expect.not.stringContaining('C:\\private'))
+    expect(showErrorBox).toHaveBeenCalledWith('Mineloa 가져오기 복구 필요', expect.not.stringContaining('C:\\private'))
     expect(close).toHaveBeenCalledTimes(1)
     expect(quit).toHaveBeenCalledTimes(1)
     expect(start).not.toHaveBeenCalled()

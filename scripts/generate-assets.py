@@ -14,22 +14,29 @@ FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
 size = 1024
 image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
 draw = ImageDraw.Draw(image)
-surface = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-surface_draw = ImageDraw.Draw(surface)
-for y in range(48, 976):
-    t = (y - 48) / 928
-    color = tuple(round(a + (b - a) * t) for a, b in zip((29, 78, 216), (49, 46, 129))) + (255,)
-    surface_draw.line((48, y, 976, y), fill=color)
-mask = Image.new("L", (size, size), 0)
-ImageDraw.Draw(mask).rounded_rectangle((48, 48, 976, 976), radius=224, fill=255)
-image.paste(surface, mask=mask)
-draw = ImageDraw.Draw(image)
-draw.polygon([(280, 718), (280, 306), (380, 306), (644, 580), (644, 306), (744, 306), (744, 718), (644, 718), (380, 444), (380, 718)], fill="white")
-draw.ellipse((690, 692, 798, 800), fill=(103, 232, 249, 255))
+coral = (255, 56, 92, 255)
+white = (255, 255, 255, 255)
+draw.rounded_rectangle((48, 48, 976, 976), radius=224, fill=coral)
+draw.rounded_rectangle((164, 236, 860, 760), radius=132, fill=white)
+draw.polygon([(548, 724), (710, 724), (598, 856)], fill=white)
+draw.polygon([
+    (288, 620), (288, 384), (376, 384), (512, 528), (648, 384),
+    (736, 384), (736, 620), (648, 620), (648, 510), (512, 652),
+    (376, 510), (376, 620),
+], fill=coral)
+
+svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">Mineloa</title>
+  <rect x="48" y="48" width="928" height="928" rx="224" fill="#FF385C"/>
+  <path class="brand-glyph" d="M296 236h432c73 0 132 59 132 132v260c0 73-59 132-132 132H710L598 856l-50-96H296c-73 0-132-59-132-132V368c0-73 59-132 132-132z" fill="#FFFFFF"/>
+  <path d="M288 620V384h88l136 144 136-144h88v236h-88V510L512 652 376 510v110z" fill="#FF385C"/>
+</svg>
+"""
 
 image.save(ICON_DIR / "icon.png")
 image.save(ICON_DIR / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 image.save(ICON_DIR / "icon.icns", sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)])
+(ICON_DIR / "icon.svg").write_text(svg, encoding="utf-8")
 
 sample_rate = 48_000
 duration_seconds = 3

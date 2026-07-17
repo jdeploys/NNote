@@ -255,18 +255,18 @@ describe('App route and recording ownership', () => {
     const user = userEvent.setup()
     const desktopApi = api()
     vi.mocked(desktopApi.archive.importMeeting)
-      .mockResolvedValueOnce({ status: 'failure', code: 'INVALID_ARCHIVE', message: '올바른 NNote 파일이 아닙니다.' })
+      .mockResolvedValueOnce({ status: 'failure', code: 'INVALID_ARCHIVE', message: '올바른 Mineloa 파일이 아닙니다.' })
       .mockResolvedValueOnce({ status: 'cancelled' })
     render(<App desktopApi={desktopApi} recordingController={{ start: vi.fn(), stop: vi.fn(), discard: vi.fn() }} />)
 
     await user.click(await screen.findByRole('button', { name: '.nnote 가져오기' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('올바른 NNote 파일이 아닙니다.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('올바른 Mineloa 파일이 아닙니다.')
     expect(screen.getByRole('button', { name: '녹음 시작' })).toBeVisible()
     expect(screen.getByRole('button', { name: /제품 회의/ })).toBeVisible()
     await user.click(screen.getByRole('button', { name: '가져오기 다시 시도' }))
     expect(desktopApi.archive.importMeeting).toHaveBeenCalledTimes(2)
-    expect(screen.queryByText('올바른 NNote 파일이 아닙니다.')).not.toBeInTheDocument()
+    expect(screen.queryByText('올바른 Mineloa 파일이 아닙니다.')).not.toBeInTheDocument()
 
     vi.mocked(desktopApi.archive.importMeeting).mockResolvedValueOnce({ status: 'failure', code: 'INVALID_ARCHIVE', message: '다시 실패했습니다.' })
     await user.click(screen.getByRole('button', { name: '.nnote 가져오기' }))
