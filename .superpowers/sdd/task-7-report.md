@@ -1,100 +1,71 @@
-# Task 7 report — local runtime packaging and release verification
+# Task 7 report — settings help and provider status
 
 ## Scope lock
 
-- Changed only local-runtime build/package verification, platform packaging, release CI, and the Task 6 macOS visual baseline gate.
-- Did not change provider selection, processing behavior, recording, recovery, archive, retention, or downloaded-model storage.
-- Did not push, move a tag, replace release assets, or claim that a packaged helper is currently installed.
+- Reorganized only API key, processing-provider, Whisper, and Codex CLI settings hierarchy, their shared settings CSS, and the two named unit suites.
+- Preserved recording, templates, detail, routing, IPC, provider registry, Whisper manager, and Codex command-resolution behavior.
+- Preserved the user-authored Codex behavior: cloud-not-local labeling, all four actionable mappings, raw availability message/path redaction, refresh/provider independence, failure-only troubleshooting, and the statement that Nnote does not change global Codex settings or login.
 
-## RED evidence
+## Implementation
 
-Command:
+- Replaced feature-local help/status wrappers with the common `FieldHelp`, `PrivacyNotice`, `StatusIndicator`, and `TroubleshootingDisclosure` components.
+- Codex now renders the exact hierarchy `FieldHelp → PrivacyNotice → StatusIndicator → TroubleshootingDisclosure`; the disclosure and refresh action are absent when available.
+- Whisper uses the common local privacy notice and status indicator while retaining model download/delete behavior.
+- API key settings now render a labelled `SurfaceCard` credential region and a separate, spaced danger region with common `ActionBar` and `Button` variants.
+- No code reads or renders `descriptor.availability.message`.
 
-```text
-npx vitest run tests/unit/local-runtime-build-contract.test.ts tests/unit/package-config.test.ts tests/unit/runtime-package-verification.test.ts
-```
+## TDD evidence
 
-Observed before implementation: 3 files failed; 8 tests failed and 6 passed. Failures were the expected missing build scripts/notices, missing platform `extraResources`, missing `verifyLocalRuntimePayload`, absent `localRuntime` signal, and release workflow still using `gh release create`.
+### Baseline
 
-A second focused RED cycle pinned immutable source commits. The two script-contract cases failed until both scripts checked:
+`npm test -- tests/unit/processing-provider-settings.test.tsx tests/unit/api-key-settings.test.tsx`
 
-- whisper.cpp v1.9.1: `f049fff95a089aa9969deb009cdd4892b3e74916`
-- FFmpeg n8.1.2: `1c2c67c0b9f7f66ab32c19dcf7f227bcd290aa4c`
+- PASS: 2 files, 24/24 tests.
+- This confirmed the protected cloud copy, four error mappings, refresh behavior, available-state help absence, secret handling, and path redaction before production edits.
 
-## GREEN implementation
+### RED
 
-- Added fail-closed native PowerShell/macOS build scripts with exact LGPL-compatible FFmpeg flags, fixed source tags and commits, native-architecture checks, cleanup, licenses, notices, and manifest emission.
-- Added platform/architecture-specific electron-builder resources. Downloaded `ggml-base.bin`/`ggml-small.bin` models are not packaged.
-- Added manifest verification for schema, pinned versions/commits, target, canonical containment, regular/non-symlink files, macOS executable bits, size, SHA-256, and required notices/licenses.
-- Extended the real packaged-app launch signal with exact `localRuntime: true`; `scripts/verify-package.mjs` now requires it.
-- Added nested-helper signing before app signing. With no credentials the workflow performs an explicit ad-hoc app fallback and records `UNNOTARIZED`; with signing and notarization credentials it enables notarization and requires `spctl` assessment.
-- Added native macOS Task 6 visual snapshot generation/comparison and artifact upload. Windows-generated images are never copied into the Darwin baseline directory.
-- Changed tag publication to `gh release upload v0.0.1 --clobber` followed by `gh release edit`; `workflow_dispatch` never reaches the tag-only release job.
+After adding the visible hierarchy assertions and before changing production code, the same command produced:
 
-## Verification evidence
+- 3 expected failures and 24 passes.
+- `separates the credential card from the API key danger zone`: missing labelled credential region.
+- `shows local-only audio privacy and missing speaker separation`: missing common local `role="note"` and status primitive.
+- `shows concise field help, a cloud privacy notice and failure-only troubleshooting in that order`: missing common cloud `role="note"` and required order.
+- The paired refresh-independence regression already passed, confirming the protected behavior stayed intact during RED.
 
-Focused GREEN:
+### GREEN
 
-```text
-Test Files 3 passed (3)
-Tests 14 passed (14)
-```
+After the minimum common-component recomposition:
 
-Full requested local verification:
+- Focused settings command: 2 files, 27/27 tests passed.
+- Required provider command: 5 files, 74/74 tests passed.
+- Full suite after restoring Node ABI 127: 55 files, 550 passed, 1 skipped.
 
-```text
-npm rebuild better-sqlite3
-npm run typecheck
-npm run lint
-npm test
-npm run build
-```
+## Visible UI verification
 
-Observed:
+1. **Reported pixels:** API credential card followed by a separately spaced danger zone; the four-level Codex help hierarchy; local Whisper privacy/status; failure-only troubleshooting; compact stacking without horizontal overflow.
+2. **Rendering source:** `ApiKeySettings.tsx`, `ProcessingProviderSettings.tsx`, `CodexCliStatus.tsx`, and `WhisperModelSettings.tsx`, composed from common `SurfaceCard`, `ActionBar`, `Button`, `FieldHelp`, `PrivacyNotice`, `StatusIndicator`, and `TroubleshootingDisclosure`; final spacing, responsive stacking, notice, and status pixels come from `src/renderer/src/styles/app.css` plus the common theme/global styles.
+3. **Verified visible change:** The real built Electron App at outer 1200×800 (renderer 1184×735) rendered a 904×169.453125 credential card and a 904×90 danger zone separated by exactly 26px. The selected available Codex state rendered one cloud privacy note, the global-settings field help, no troubleshooting or refresh action, and no raw path. At outer 640×800 (renderer 624×735), document `scrollWidth` and `clientWidth` were both 609px, and both credential heading and danger zone used column layout. An ignored evidence harness loaded in the same Electron renderer exercised all four unavailable codes: all four had the exact help order, expected mapping text, a cloud note and refresh action, no raw path, and no overflow (`1169=1169` desktop, `609=609` compact). The actual App was the primary layout check; the harness only supplied deterministic failure states because the real machine's Codex CLI was available.
+4. **Regression tests:** `separates the credential card from the API key danger zone`; `shows local-only audio privacy and missing speaker separation`; `shows concise field help, a cloud privacy notice and failure-only troubleshooting in that order`; `keeps provider refresh independent from saving provider choices`; the existing four-row `shows actionable Codex troubleshooting for %s`; and `keeps available Codex status free of troubleshooting instructions`.
 
-- native dependency rebuild: success
-- TypeScript: success
-- ESLint: success, zero warnings
-- Vitest: 50 files passed, 474 tests passed
-- electron-vite production build: success
-- Windows processing-settings pixel comparison: 7 passed (existing reviewed baselines unchanged)
-- PowerShell and Node build/signing script syntax checks: `SCRIPT_SYNTAX_OK`
-- release YAML parsed successfully with PyYAML
-- `git diff --check`: success
+Original-resolution evidence inspected:
 
-## Explicit unresolved CI/runtime facts
+- `.superpowers/sdd/task-7-settings-1200x800.png`
+- `.superpowers/sdd/task-7-settings-640x800.png`
+- `.superpowers/sdd/task-7-codex-failures-1200x800.png`
+- `.superpowers/sdd/task-7-codex-failures-640x800.png`
 
-- This Windows machine has neither `cmake` nor MSYS2 (`C:\msys64\usr\bin\bash.exe` absent). Per the brief, no large native toolchain download/build was started locally. Therefore no local Windows package-launch `localRuntime: true` claim is made.
-- macOS x64/arm64 helper builds, app launch signals, native visual baselines, codesign diagnostics, and any notarization result require the real GitHub macOS runners. The workflow uploads all of these diagnostics.
-- The repository currently has no configured signing/notarization secrets. The expected current macOS result is ad-hoc signed and explicitly unnotarized. A clean Gatekeeper/notarization claim remains blocked until credentials exist and CI reports `NOTARIZATION VERIFIED`.
-- Existing `v0.0.1` assets were not changed by this task. The tag workflow must complete successfully before replacing them.
+## Verification
 
-## Review remediation
+- `npm test -- tests/unit/api-key-settings.test.tsx tests/unit/processing-provider-settings.test.tsx tests/unit/provider-registry.test.ts tests/unit/whisper-model-manager.test.ts tests/unit/codex-command-resolver.test.ts` — PASS, 74/74.
+- `npm test` — PASS, 55 files; 550 passed, 1 skipped.
+- `npm run typecheck` — PASS.
+- `npm run lint` — PASS.
+- `npm run build` — PASS.
+- `git diff --check` — PASS.
 
-- Runtime truth now requires matching PE x64 or thin Mach-O x64/arm64 headers and successful bounded, shell-free `whisper-cli --help` / `ffmpeg -version` probes. Hash-valid text, wrong architecture, and spawn/missing-DLL failures are regression tested and cannot emit `localRuntime: true`.
-- The manifest is read through `O_NOFOLLOW`, `FileHandle.stat()`, path/open identity comparison, a 128 KiB bound, and exact reads. A real manifest symlink test runs where the host permits link creation. The remaining same-user path swap between closing the verified helper handle and spawning by pathname is a platform API limitation: Node exposes neither Windows handle execution nor portable `execveat`; the runtime still rechecks canonical containment and manifest hash before that boundary.
-- Complete Developer ID signing now requires `CSC_LINK`, `CSC_KEY_PASSWORD`, and explicit `MAC_CSC_NAME`, exposed only to the package step. Nested helpers receive that exact identity before the app, and CI compares their complete Authority chain and TeamIdentifier with the app.
-- Ad-hoc fallback disables hardened runtime and signs without the runtime option. Developer ID without notarization and ad-hoc/unnotarized states are reported separately.
-- Release CI only compares committed Darwin baselines. The explicit manual `record-macos-visual-baselines` workflow produces candidate artifacts; `docs/release/macos-visual-baselines.md` documents inspect-then-commit review.
-- Every action in every repository workflow is pinned to a 40-character commit SHA. Default permissions are `contents: read`; only the release job has `contents: write`.
+For Electron verification, `npm run rebuild:electron` rebuilt `better-sqlite3` for Electron 43.1.0. After screenshots, `npm rebuild better-sqlite3` restored Node ABI 127 before the full Vitest run.
 
-Post-review full verification observed 50 test files and 484 tests passing, TypeScript and ESLint passing, the production build succeeding, Windows processing-settings pixels passing 7/7, and all workflow YAML/action-pin static checks passing.
+## Concerns
 
-## Signing/hash order remediation
-
-- The installed electron-builder 26.15.3 schema and `MacConfiguration` type define `signIgnore` as a regex or regex array. Its installed `MacTargetHelper` compiles each value with `new RegExp()` and tests the full file path. Package configuration now ignores exactly the final `whisper-cli` and `ffmpeg` paths below `Contents/Resources/local-runtime/darwin-(x64|arm64)`.
-- `afterPack` signs both helpers with the final explicit Developer ID identity or `-`, then calls the manifest writer with `replaceExisting: true`. A behavior test uses a fake signer that changes both helper byte streams and the real writer; the resulting manifest SHA-256 values match those final signed bytes and the observed order is `whisper`, `ffmpeg`, `manifest`.
-- Manifest replacement now requires an existing contained regular non-symlink manifest, opens it with `O_NOFOLLOW`, checks path/open identity, writes and fsyncs an exclusive temporary file inside the owned runtime directory, rechecks destination identity, and atomically renames. A real symlink target regression preserves the outside file.
-- Electron-builder does not re-sign the ignored helpers. The fallback `afterSign` signs only the outer app without `--deep`, sealing the already-final helpers and refreshed manifest without mutating children.
-- Release notes now use state-neutral signing/notarization language and direct users to the workflow diagnostics.
-
-Post-order-fix verification observed 51 test files and 488 tests passing, with typecheck, lint, production build, workflow YAML/action pins, Node script syntax, and diff checks all succeeding.
-
-## electron-builder keychain readiness remediation
-
-- The Developer ID `afterPack` path now awaits `context.packager.codeSigningInfo.value` before either nested helper is signed. This is electron-builder's lazy keychain-import boundary; the returned `keychainFile`, when present, is passed to both `codesign` calls with `--keychain`.
-- The installed electron-builder `CodeSigningInfo` contract exposes only `keychainFile`, not the resolved certificate identity. The strongest available identity check is therefore to validate the explicit non-empty `CSC_NAME` value and pass that exact value to `codesign --sign`; `codesign` resolves it inside the imported keychain. When `CSC_LINK` is configured, a missing keychain path fails closed.
-- The ad-hoc path returns before accessing `codeSigningInfo.value`, uses no keychain argument, and retains `--sign -`. Its paired regression supplies a rejecting lazy value and verifies it is never read.
-- The signed-path regression verifies the observable order `codeSigningInfo`, `whisper-cli`, `ffmpeg`, `manifest`, checks both signer argument lists for the keychain and explicit identity, mutates helper bytes through the signer runner, and confirms the refreshed manifest hashes those final bytes.
-
-Post-keychain-fix verification observed 51 test files and 490 tests passing, with typecheck, ESLint, production build, Node syntax, workflow YAML/action pins, and diff checks all succeeding.
+- The real runtime reported Codex CLI available, so deterministic rendering of all four unavailable states used the ignored Electron evidence harness in addition to the real-App check and unit regressions. It did not modify or replace any runtime provider behavior.

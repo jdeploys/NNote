@@ -6,6 +6,9 @@ import type {
   WhisperModelProgress,
   WhisperModelStatus,
 } from '../../../../shared/contracts/settings'
+import { StatusIndicator } from '../../components/feedback/StatusIndicator'
+import { PrivacyNotice } from '../../components/help/PrivacyNotice'
+import { Button } from '../../components/ui/Button'
 
 const modelNames: Readonly<Record<WhisperModelId, string>> = { base: 'base', small: 'small' }
 
@@ -82,22 +85,19 @@ export function WhisperModelSettings({
     : '로컬 처리 구성 요소 또는 선택한 모델을 아직 사용할 수 없습니다.'
 
   return <section className="model-status" aria-label="로컬 Whisper 모델 상태">
-    {descriptor.privacy === 'local' && <div className="provider-notice provider-notice-local">
-      <strong>오디오는 외부로 전송되지 않습니다.</strong>
+    {descriptor.privacy === 'local' && <PrivacyNotice title="로컬 처리">
+      <p>오디오는 외부로 전송되지 않습니다.</p>
       <p>화자 분리를 지원하지 않습니다.</p>
-    </div>}
-    <div className="provider-status-row">
-      <span className={`status-dot ${descriptor.availability.available ? 'is-ready' : 'is-warning'}`} aria-hidden="true" />
-      <p>{runtimeText}</p>
-    </div>
+    </PrivacyNotice>}
+    <StatusIndicator available={descriptor.availability.available}>{runtimeText}</StatusIndicator>
     <div className="model-card">
       <div>
         <strong>{modelNames[modelId]} 모델</strong>
         <p>{status === null ? '상태 확인 중' : installed ? `설치됨 · ${formatBytes(status.expectedBytes)}` : `설치 필요 · ${formatBytes(status.expectedBytes)}`}</p>
       </div>
       {installed
-        ? <button className="button-danger" type="button" disabled={busy} onClick={() => void runAction(settings.deleteWhisperModel)}>{modelNames[modelId]} 모델 삭제</button>
-        : <button className="button-primary" type="button" disabled={busy || status === null || status.state === 'downloading'} onClick={() => void runAction(settings.downloadWhisperModel)}>{status?.state === 'downloading' ? '다운로드 중' : `${modelNames[modelId]} 모델 다운로드`}</button>}
+        ? <Button variant="danger" type="button" disabled={busy} onClick={() => void runAction(settings.deleteWhisperModel)}>{modelNames[modelId]} 모델 삭제</Button>
+        : <Button variant="primary" type="button" disabled={busy || status === null || status.state === 'downloading'} onClick={() => void runAction(settings.downloadWhisperModel)}>{status?.state === 'downloading' ? '다운로드 중' : `${modelNames[modelId]} 모델 다운로드`}</Button>}
     </div>
     {activeProgress !== null && <div className="model-progress">
       <div><span>다운로드 중</span><span>{Math.round((activeProgress.receivedBytes / activeProgress.totalBytes) * 100)}%</span></div>

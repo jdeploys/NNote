@@ -1,4 +1,9 @@
 import type { ProcessingProviderDescriptor } from '../../../../shared/contracts/settings'
+import { StatusIndicator } from '../../components/feedback/StatusIndicator'
+import { FieldHelp } from '../../components/help/FieldHelp'
+import { PrivacyNotice } from '../../components/help/PrivacyNotice'
+import { TroubleshootingDisclosure } from '../../components/help/TroubleshootingDisclosure'
+import { Button } from '../../components/ui/Button'
 
 const guidance: Readonly<Record<string, string>> = {
   CODEX_NOT_INSTALLED: 'Codex CLI가 설치되어 있지 않습니다. 터미널에서 Codex CLI를 설치한 뒤 다시 확인하세요.',
@@ -28,21 +33,16 @@ export function CodexCliStatus({ descriptor, onAvailabilityChanged }: CodexCliSt
     : troubleshooting[descriptor.availability.code ?? ''] ?? troubleshooting.CODEX_UNAVAILABLE
 
   return <section className="cli-status" aria-label="Codex CLI 상태">
-    {descriptor.privacy === 'text_cloud' && <div className="provider-notice provider-notice-cloud">
-      <strong>전사문이 Codex 계정으로 전송됩니다.</strong>
+    <FieldHelp>Nnote는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.</FieldHelp>
+    {descriptor.privacy === 'text_cloud' && <PrivacyNotice title="클라우드 처리">
+      <p>전사문이 Codex 계정으로 전송됩니다.</p>
       <p>로컬 추론이 아닌 클라우드 처리입니다.</p>
-    </div>}
-    <div className="provider-status-row">
-      <span className={`status-dot ${descriptor.availability.available ? 'is-ready' : 'is-warning'}`} aria-hidden="true" />
-      <p>{status}</p>
-    </div>
-    {steps !== null && <section className="codex-troubleshooting" aria-label="Codex CLI 문제 해결">
-      <strong>문제 해결 방법</strong>
-      <ol>{steps.map((step, index) => <li key={`${index}-${step}`}>
-        {step.startsWith('codex ') || step.startsWith('npm ') ? <code>{step}</code> : step}
-      </li>)}</ol>
-      <button type="button" onClick={() => void onAvailabilityChanged()} aria-label="Codex CLI 상태 다시 확인">다시 확인</button>
-    </section>}
-    <p className="provider-help">Nnote는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.</p>
+    </PrivacyNotice>}
+    <StatusIndicator available={descriptor.availability.available}>{status}</StatusIndicator>
+    <TroubleshootingDisclosure
+      title="Codex CLI 문제 해결"
+      steps={steps?.map((step) => step.startsWith('codex ') || step.startsWith('npm ') ? <code>{step}</code> : step) ?? null}
+      action={steps === null ? undefined : <Button type="button" onClick={() => void onAvailabilityChanged()} aria-label="Codex CLI 상태 다시 확인">다시 확인</Button>}
+    />
   </section>
 }

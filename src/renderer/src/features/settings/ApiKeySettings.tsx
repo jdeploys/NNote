@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { ApiKeyStatus, SettingsApi } from '../../../../shared/contracts/settings'
+import { StatusIndicator } from '../../components/feedback/StatusIndicator'
+import { ActionBar } from '../../components/layout/ActionBar'
+import { Button } from '../../components/ui/Button'
+import { SurfaceCard } from '../../components/ui/SurfaceCard'
 
 interface ApiKeySettingsProps {
   settings: SettingsApi
@@ -84,24 +88,38 @@ export function ApiKeySettings({ settings }: ApiKeySettingsProps) {
     <section className="settings-panel" aria-labelledby="api-key-settings-title">
       <div className="settings-heading">
         <div><p className="eyebrow">OPENAI</p><h2 id="api-key-settings-title">API 키 설정</h2></div>
-        <span className="credential-status">{status === null ? '상태 확인 불가' : status.configured ? '설정됨' : '설정되지 않음'}</span>
       </div>
-      {status?.lastValidatedAt ? <p className="settings-meta">마지막 검증: {status.lastValidatedAt}</p> : null}
-      <form className="credential-form" onSubmit={save}>
-        <label htmlFor="openai-api-key">OpenAI API 키</label>
-        <input
-          id="openai-api-key"
-          type="password"
-          autoComplete="off"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-        />
-        <button type="submit" disabled={busy || value.length === 0}>
-          API 키 저장
-        </button>
-      </form>
-      <div className="danger-zone"><div><strong>저장된 API 키 삭제</strong><p>이 기기의 보안 저장소에서만 제거합니다.</p></div><button className="button-danger" type="button" disabled={busy || !status?.configured} onClick={remove}>API 키 삭제</button></div>
-      {error ? <p role="alert">{error}</p> : null}
+      <SurfaceCard labelledBy="api-key-credential-title" className="credential-card">
+        <div className="credential-card-heading">
+          <h3 id="api-key-credential-title">OpenAI API 자격 증명</h3>
+          <StatusIndicator available={status?.configured === true}>
+            {status === null ? '상태 확인 불가' : status.configured ? '설정됨' : '설정되지 않음'}
+          </StatusIndicator>
+        </div>
+        {status?.lastValidatedAt ? <p className="settings-meta">마지막 검증: {status.lastValidatedAt}</p> : null}
+        <form className="credential-form" onSubmit={save}>
+          <label htmlFor="openai-api-key">OpenAI API 키</label>
+          <input
+            id="openai-api-key"
+            type="password"
+            autoComplete="off"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+          <ActionBar>
+            <Button variant="primary" type="submit" disabled={busy || value.length === 0}>
+              API 키 저장
+            </Button>
+          </ActionBar>
+        </form>
+        {error ? <p role="alert" className="settings-alert">{error}</p> : null}
+      </SurfaceCard>
+      <section className="danger-zone" aria-labelledby="api-key-danger-title">
+        <div><strong id="api-key-danger-title">저장된 API 키 삭제</strong><p>이 기기의 보안 저장소에서만 제거합니다.</p></div>
+        <ActionBar>
+          <Button variant="danger" type="button" disabled={busy || !status?.configured} onClick={remove}>API 키 삭제</Button>
+        </ActionBar>
+      </section>
     </section>
   )
 }

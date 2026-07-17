@@ -122,6 +122,23 @@ describe('API key settings', () => {
     expect(screen.getByRole('button', { name: 'API 키 삭제' })).toBeInTheDocument()
   })
 
+  it('separates the credential card from the API key danger zone', async () => {
+    const settings: DesktopApi['settings'] = {
+      ...processingSettingsApi(),
+      saveApiKey: vi.fn().mockResolvedValue(undefined),
+      getApiKeyStatus: vi.fn().mockResolvedValue({ configured: true, lastValidatedAt: null }),
+      deleteApiKey: vi.fn().mockResolvedValue(undefined),
+    }
+
+    render(<ApiKeySettings settings={settings} />)
+
+    const credential = await screen.findByRole('region', { name: 'OpenAI API 자격 증명' })
+    const danger = screen.getByRole('region', { name: '저장된 API 키 삭제' })
+    expect(credential).toHaveClass('surface-card', 'credential-card')
+    expect(danger).toHaveClass('danger-zone')
+    expect(credential.compareDocumentPosition(danger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('saves a key and shows the configured status without rendering the secret', async () => {
     const user = userEvent.setup()
     const settings: DesktopApi['settings'] = {

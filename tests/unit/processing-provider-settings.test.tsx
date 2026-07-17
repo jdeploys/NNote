@@ -75,8 +75,10 @@ describe('processing provider settings visible outcomes', () => {
     render(<ProcessingProviderSettingsView settings={settingsApi()} />)
     await expand()
     await userEvent.setup().selectOptions(screen.getByLabelText('전사 방식'), 'local_whisper')
-    expect(await screen.findByText('오디오는 외부로 전송되지 않습니다.')).toBeVisible()
+    expect(await screen.findByRole('note', { name: '로컬 처리' })).toBeVisible()
+    expect(screen.getByText('오디오는 외부로 전송되지 않습니다.')).toBeVisible()
     expect(screen.getByText('화자 분리를 지원하지 않습니다.')).toBeVisible()
+    expect(screen.getByText('로컬 처리 구성 요소 또는 선택한 모델을 아직 사용할 수 없습니다.').closest('.status-indicator')).not.toBeNull()
     expect(screen.queryByText(/C:\/model/)).not.toBeInTheDocument()
   })
 
@@ -153,6 +155,41 @@ describe('processing provider settings visible outcomes', () => {
     await userEvent.setup().selectOptions(screen.getByLabelText('요약 방식'), 'codex_cli')
     expect(await screen.findByText('전사문이 Codex 계정으로 전송됩니다.')).toBeVisible()
     expect(screen.getByText('로컬 추론이 아닌 클라우드 처리입니다.')).toBeVisible()
+  })
+
+  it('shows concise field help, a cloud privacy notice and failure-only troubleshooting in that order', async () => {
+    const invalid = descriptors.map((descriptor) => descriptor.id === 'codex_cli'
+      ? { ...descriptor, availability: { available: false, code: 'CODEX_CONFIG_INVALID', message: null } }
+      : descriptor)
+    render(<ProcessingProviderSettingsView settings={settingsApi({ listProcessingProviderDescriptors: vi.fn(async () => invalid) })} />)
+    await expand()
+    await userEvent.setup().selectOptions(screen.getByLabelText('요약 방식'), 'codex_cli')
+
+    const section = screen.getByRole('region', { name: 'Codex CLI 상태' })
+    const text = section.textContent ?? ''
+    expect(screen.getByRole('note', { name: '클라우드 처리' })).toBeVisible()
+    expect(screen.getByText('Nnote는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.')).toHaveClass('field-help')
+    expect(text.indexOf('Nnote는 전역 Codex 설정이나 로그인 정보를 변경하지 않습니다.')).toBeLessThan(text.indexOf('전사문이 Codex 계정으로 전송됩니다.'))
+    expect(text.indexOf('전사문이 Codex 계정으로 전송됩니다.')).toBeLessThan(text.indexOf('Codex CLI 설정이 올바르지 않습니다.'))
+    expect(text.indexOf('Codex CLI 설정이 올바르지 않습니다.')).toBeLessThan(text.indexOf('Codex CLI 문제 해결'))
+  })
+
+  it('keeps provider refresh independent from saving provider choices', async () => {
+    const invalid = descriptors.map((descriptor) => descriptor.id === 'codex_cli'
+      ? { ...descriptor, availability: { available: false, code: 'CODEX_CONFIG_INVALID', message: null } }
+      : descriptor)
+    const listDescriptors = vi.fn()
+      .mockResolvedValueOnce(descriptors)
+      .mockResolvedValueOnce(invalid)
+      .mockResolvedValue(descriptors)
+    const api = settingsApi({ listProcessingProviderDescriptors: listDescriptors })
+    render(<ProcessingProviderSettingsView settings={api} />)
+    await expand()
+    await userEvent.setup().selectOptions(screen.getByLabelText('요약 방식'), 'codex_cli')
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Codex CLI 상태 다시 확인' }))
+
+    expect(api.updateProcessingProviders).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('요약 방식')).toHaveValue('codex_cli')
   })
 
   it.each([
