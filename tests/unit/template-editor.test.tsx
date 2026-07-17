@@ -52,7 +52,7 @@ describe('TemplateEditor', () => {
     expect(screen.queryByRole('button', { name: '템플릿 삭제' })).not.toBeInTheDocument()
   })
 
-  it('shows the editable template primary actions and field labels', async () => {
+  it('renders the editable template controls and selected state', async () => {
     const editableTemplate = { ...defaultTemplate, id: 'custom', name: '사용자', isDefault: false as const }
     const api = { list: vi.fn(async () => [editableTemplate]), create: vi.fn(), update: vi.fn(), reorderSections: vi.fn(), delete: vi.fn() } satisfies TemplatesApi
     render(<TemplateEditor templates={api} />)

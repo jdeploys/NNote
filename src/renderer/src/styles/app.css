@@ -189,6 +189,15 @@
 .template-editor > .action-bar { padding-top: 2px; }
 .template-editor > .action-bar > div:first-child { width: 100%; justify-content: flex-end; }
 .template-danger-zone { margin-top: 0; }
+@media (min-width: 744px) {
+  .template-page .page-header { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 20px; margin-bottom: 12px; }
+  .template-page .page-header-row { min-width: 0; }
+  .template-editor { gap: 12px; padding: 16px; }
+  .template-sections-heading > div { padding-top: 10px; }
+  .template-sections-heading > span { margin-top: 8px; }
+  .template-section-card { gap: 10px; padding: 12px; }
+  .template-prompt-field textarea { min-height: 64px; }
+}
 .dialog-scrim { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; overflow: auto; padding: 24px; background: rgb(20 18 16 / 52%); backdrop-filter: blur(8px); }
 .dialog-scrim-nested { z-index: 110; background: rgb(20 18 16 / 64%); }
 .dialog-panel { width: min(680px, 100%); max-height: calc(100vh - 48px); overflow: auto; border: 1px solid var(--hairline-strong); border-radius: var(--radius-card); background: var(--surface-1); color: var(--ink); padding: 28px; box-shadow: 0 24px 80px rgb(20 18 16 / 28%); }
