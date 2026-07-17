@@ -589,7 +589,7 @@ return <AppShell active={activeNavigation} onNavigate={navigate} onImport={() =>
     <Dashboard meetings={meetings} recordingControls={recordingControls} templates={desktopApi.templates} onOpenMeeting={(id) => void openMeeting(id)} onNavigate={navigate} />
   </div>
   {screen === 'settings' && <main className="page-container settings-page">
-    <PageHeader ref={routeHeading} eyebrow="SETTINGS" title="설정" description="Nnote가 기록과 AI 처리를 사용하는 방식을 관리합니다." />
+    <PageHeader ref={routeHeading} eyebrow="SETTINGS" title="설정" description="Nnote가 기록과 AI 처리를 사용하는 방식을 관리합니다." backLabel="전체 기록" onBack={backToAll} />
     <AppearanceSettings preference={preference} onChange={setPreference} />
     <ApiKeySettings settings={desktopApi.settings} />
     <ProcessingProviderSettings settings={desktopApi.settings} />
@@ -605,7 +605,7 @@ return <AppShell active={activeNavigation} onNavigate={navigate} onImport={() =>
     onRefresh={refreshOpenMeeting}
   />}
   {screen === 'templates' && <main className="page-container template-page">
-    <PageHeader ref={routeHeading} eyebrow="TEMPLATES" title="요약 템플릿" description="회의 종류에 맞는 요약 구조와 지시문을 관리합니다." />
+    <PageHeader ref={routeHeading} eyebrow="TEMPLATES" title="요약 템플릿" description="회의 종류에 맞는 요약 구조와 지시문을 관리합니다." backLabel="전체 기록" onBack={backToAll} />
     <TemplateEditor templates={desktopApi.templates} />
   </main>}
 </AppShell>
