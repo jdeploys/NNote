@@ -100,6 +100,19 @@ async function apiKeyControlGeometry(page: Page) {
   })
 }
 
+async function expectPaintableSettingsIcon(page: Page, heading: string) {
+  const icon = page.getByRole('heading', { name: heading, exact: true }).locator('.ui-icon')
+  await expect(icon).toBeVisible()
+  const geometry = await icon.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return { width: rect.width, height: rect.height }
+  })
+  expect(geometry.width).toBeGreaterThanOrEqual(16)
+  expect(geometry.width).toBeLessThanOrEqual(20)
+  expect(geometry.height).toBeGreaterThanOrEqual(16)
+  expect(geometry.height).toBeLessThanOrEqual(20)
+}
+
 for (const [state, snapshot, expanded] of [
   ['provider-defaults', 'processing-providers-defaults.png', false],
   ['provider-advanced', 'processing-providers-advanced.png', true],
@@ -122,6 +135,8 @@ for (const theme of ['light', 'dark'] as const) {
     await open(page, 'provider-defaults', false, theme)
     await page.evaluate(() => scrollTo({ top: 0, left: 0, behavior: 'auto' }))
     await expect(page.getByRole('heading', { name: '설정', exact: true })).toBeInViewport()
+    await expectPaintableSettingsIcon(page, '화면 테마')
+    await expectPaintableSettingsIcon(page, 'API 키 설정')
     await expect(page.getByRole('radio', { name: theme === 'light' ? '라이트' : '다크' })).toBeInViewport()
     await expect(page).toHaveScreenshot(`settings-${theme}.png`, { animations: 'disabled', fullPage: false, omitBackground: false })
   })

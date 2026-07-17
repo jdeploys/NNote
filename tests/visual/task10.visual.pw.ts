@@ -3,7 +3,7 @@ import { hasTask10VisualBaseline } from './platformSupport'
 
 test.skip(
   !hasTask10VisualBaseline(process.platform),
-  `Task 10 visual comparisons support Windows and macOS, not ${process.platform}.`,
+  `Task 10 visual comparisons support Windows, not ${process.platform}.`,
 )
 
 type FixtureTheme = 'light' | 'dark'
@@ -31,6 +31,19 @@ async function openRoute(page: Page, state: string, theme: FixtureTheme = 'light
 
 async function expectNoHorizontalOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+}
+
+async function expectPaintableActionIcon(page: Page, label: string) {
+  const icon = page.getByRole('button', { name: label, exact: true }).locator('.ui-icon').first()
+  await expect(icon).toBeVisible()
+  const geometry = await icon.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return { width: rect.width, height: rect.height }
+  })
+  expect(geometry.width).toBeGreaterThanOrEqual(16)
+  expect(geometry.width).toBeLessThanOrEqual(20)
+  expect(geometry.height).toBeGreaterThanOrEqual(16)
+  expect(geometry.height).toBeLessThanOrEqual(20)
 }
 
 async function expectControlLabelUnclipped(page: Page, label: string) {
@@ -123,6 +136,7 @@ test('real dashboard light route keeps its heading and primary action in the 120
   await openRoute(page, 'idle', 'light')
   await expect(page.getByRole('heading', { name: '새 회의' })).toBeInViewport()
   await expect(page.getByRole('button', { name: '녹음 시작' })).toBeInViewport()
+  await expectPaintableActionIcon(page, '녹음 시작')
   await expect(page).toHaveScreenshot('dashboard-idle-light.png', { animations: 'disabled', fullPage: false, omitBackground: false })
 })
 
@@ -139,6 +153,7 @@ test('dashboard recording start remains button-driven through the real App', asy
   await openRoute(page, 'active')
   await expect(page.getByText('녹음 중', { exact: true })).toBeInViewport()
   await expect(page.getByRole('button', { name: '종료', exact: true })).toBeInViewport()
+  await expectPaintableActionIcon(page, '종료')
   await expect(page).toHaveScreenshot('dashboard-active.png', { animations: 'disabled', fullPage: false, omitBackground: false })
 })
 
@@ -146,6 +161,7 @@ test('meeting detail opens from the real meeting row and preserves a full-docume
   await page.setViewportSize({ width: 1200, height: 800 })
   await openRoute(page, 'completed')
   await expect(page.getByRole('heading', { name: '제품 방향성 회의' })).toBeInViewport()
+  await expectPaintableActionIcon(page, '전체 기록')
   await expect(page).toHaveScreenshot('meeting-detail-completed.png', { animations: 'disabled', fullPage: true, omitBackground: false })
 })
 
@@ -168,7 +184,17 @@ test('real template route resets scroll and keeps its heading and save action in
   await page.getByRole('button', { name: '새 템플릿' }).click()
   await expect(page.getByLabel('템플릿 이름')).toHaveValue('새 템플릿')
   await expect(page.getByRole('button', { name: '템플릿 저장' })).toBeInViewport()
+  await expectPaintableActionIcon(page, '템플릿 저장')
   await expect(page).toHaveScreenshot('templates-light.png', { animations: 'disabled', fullPage: false, omitBackground: false })
+})
+
+test('real primary actions render aligned semantic icons without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await openRoute(page, 'idle')
+  for (const label of ['전체 기록', '요약 템플릿', '설정', '.nnote 가져오기', '녹음 시작']) {
+    await expectPaintableActionIcon(page, label)
+  }
+  await expectNoHorizontalOverflow(page)
 })
 
 for (const width of [1200, 640]) {

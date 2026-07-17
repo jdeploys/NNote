@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopApi } from '../../src/shared/contracts/desktopApi'
@@ -12,6 +12,10 @@ import { RecordingTerminalError } from '../../src/renderer/src/features/recordin
 const now = '2026-07-15T00:00:00.000Z'
 const meeting: PublicMeeting = { id: 'meeting-1', title: '제품 회의', createdAt: now, updatedAt: now, durationMs: 1_000, status: 'completed', audioPolicy: 'keep', hasAudio: false, audioByteCount: 0, selectedTemplateId: null }
 const documentFixture: MeetingDocument = { meeting, audioUrl: null, speakers: [], transcript: [], summarySections: [], actionItems: [] }
+
+function getPageBackButton(): HTMLButtonElement {
+  return within(screen.getByRole('main')).getByRole('button', { name: '전체 기록' })
+}
 
 function api(overrides: Partial<DesktopApi['meetings']> = {}): DesktopApi {
   return {
@@ -55,12 +59,12 @@ describe('App route and recording ownership', () => {
     await screen.findByRole('button', { name: '녹음 시작' })
     await user.click(screen.getByRole('button', { name: '녹음 시작' }))
     await user.click(screen.getByRole('button', { name: '설정' }))
-    await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
+    await user.click(getPageBackButton())
 
     await user.click(screen.getByRole('button', { name: '요약 템플릿' }))
-    await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
+    await user.click(getPageBackButton())
     await user.click(screen.getByRole('button', { name: /제품 회의/ }))
-    await user.click(await screen.findByRole('button', { name: '← 전체 기록' }))
+    await user.click(getPageBackButton())
 
     expect(screen.getByText('녹음 중')).toBeVisible()
     expect(screen.queryByRole('button', { name: '녹음 시작' })).not.toBeInTheDocument()
@@ -83,7 +87,7 @@ describe('App route and recording ownership', () => {
     expect(desktopApi.recording.cancelStart).toHaveBeenCalledWith('recording-1')
     expect(controller.discard).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '설정' }))
-    await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
+    await user.click(getPageBackButton())
     expect(screen.getByRole('alert')).toHaveTextContent('마이크 거부')
   })
 
@@ -111,7 +115,7 @@ describe('App route and recording ownership', () => {
     const recordingSettings = await screen.findByRole('button', { name: '설정으로 이동' })
 
     await user.click(recordingSettings)
-    await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
+    await user.click(getPageBackButton())
 
     await waitFor(() => expect(screen.getByRole('button', { name: '설정으로 이동' })).toHaveFocus())
   })
@@ -122,7 +126,7 @@ describe('App route and recording ownership', () => {
     const row = await screen.findByRole('button', { name: /제품 회의/ })
     await user.click(row)
     expect(await screen.findByRole('heading', { name: '제품 회의' })).toHaveFocus()
-    await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
+    await user.click(getPageBackButton())
     await waitFor(() => expect(screen.getByRole('button', { name: /제품 회의/ })).toHaveFocus())
   })
 
@@ -184,7 +188,7 @@ describe('App route and recording ownership', () => {
     render(<App desktopApi={api()} recordingController={controller} />)
     await user.click(await screen.findByRole('button', { name: '녹음 시작' }))
     await user.click(screen.getByRole('button', { name: '설정' }))
-    await user.click(screen.getByRole('button', { name: '전체 기록' }))
+    await user.click(within(screen.getByRole('navigation', { name: '주요 메뉴' })).getByRole('button', { name: '전체 기록' }))
     expect(screen.getByText('녹음 중')).toBeVisible()
     expect(controller.start).toHaveBeenCalledTimes(1)
   })

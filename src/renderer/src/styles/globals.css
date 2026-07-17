@@ -77,8 +77,6 @@ textarea {
 }
 
 .ui-icon {
-  width: 1em;
-  height: 1em;
   flex: 0 0 auto;
   stroke: currentColor;
 }
