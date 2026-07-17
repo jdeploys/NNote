@@ -3,6 +3,8 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RecordingPanel } from '../../src/renderer/src/features/recording/RecordingPanel'
 import {
@@ -12,6 +14,21 @@ import {
 
 describe('RecordingPanel', () => {
   afterEach(cleanup)
+
+  it('keeps recording telemetry values fully visible at 1200x800', () => {
+    const styles = readFileSync(resolve('src/renderer/src/styles/app.css'), 'utf8')
+    const rule = styles.match(/\.recording-telemetry dd\s*\{([^}]*)\}/)?.[1]
+
+    expect(rule).toBeDefined()
+    expect(rule).not.toMatch(/overflow:\s*hidden/)
+    expect(rule).not.toMatch(/text-overflow:\s*ellipsis/)
+    expect(rule).not.toMatch(/white-space:\s*nowrap/)
+    expect(rule).toMatch(/overflow:\s*visible/)
+    expect(rule).toMatch(/white-space:\s*normal/)
+    expect(rule).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(rule).toMatch(/line-height:\s*1\.4/)
+    expect(rule).toMatch(/word-break:\s*keep-all/)
+  })
 
   it('keeps pause, stop and explicit discard confirmation semantics', async () => {
     const user = userEvent.setup()

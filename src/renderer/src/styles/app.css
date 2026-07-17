@@ -58,7 +58,7 @@
 .recording-telemetry { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .recording-telemetry div { min-width: 0; padding: 14px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface-2); }
 .recording-telemetry dt { color: var(--ink-tertiary); font-size: var(--type-size-badge); font-weight: 650; letter-spacing: .04em; }
-.recording-telemetry dd { overflow: hidden; margin: 7px 0 0; color: var(--ink); font: 600 14px/1.25 ui-monospace, "SFMono-Regular", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.recording-telemetry dd { overflow: visible; margin: 7px 0 0; color: var(--ink); font: 600 14px ui-monospace, "SFMono-Regular", Consolas, monospace; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; word-break: keep-all; }
 .recording-panel .inline-notice p { margin: 0; }
 .recording-panel > .inline-notice { margin-top: 2px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
