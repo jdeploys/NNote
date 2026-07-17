@@ -4,6 +4,8 @@ import type { MeetingDocument, PublicMeeting } from '../../shared/contracts/meet
 import type { RecoveryItem } from '../../shared/contracts/recovery'
 import type { ProcessingStatus as ProcessingStatusValue } from '../../shared/contracts/processing'
 import type { AudioPolicy } from '../../shared/contracts/meeting'
+import { AppShell } from './components/layout/AppShell'
+import { PageHeader } from './components/layout/PageHeader'
 import { Dashboard } from './features/meetings/Dashboard'
 import { MeetingDetail } from './features/meetings/MeetingDetail'
 import {
@@ -12,9 +14,11 @@ import {
 } from './features/recording/mediaRecorderController'
 import { RecoveryDialog } from './features/recording/RecoveryDialog'
 import { RecordingPanel } from './features/recording/RecordingPanel'
+import { AppearanceSettings } from './features/settings/AppearanceSettings'
 import { ApiKeySettings } from './features/settings/ApiKeySettings'
 import { ProcessingProviderSettings } from './features/settings/ProcessingProviderSettings'
 import { TemplateEditor } from './features/templates/TemplateEditor'
+import { useThemePreference } from './hooks/useThemePreference'
 
 type Screen = 'all' | 'templates' | 'settings' | 'detail'
 type RecordingControllerPort = Pick<MediaRecorderController, 'start' | 'stop' | 'discard'> & Partial<Pick<MediaRecorderController, 'pause' | 'resume' | 'subscribe' | 'resumeRecovered'>>
@@ -36,6 +40,7 @@ export function App({
   const [archiveNotice, setArchiveNotice] = useState<string | null>(null)
   const routeHeading = useRef<HTMLHeadingElement>(null)
   const returnFocusKey = useRef<string | null>(null)
+  const { preference, setPreference } = useThemePreference()
   const controller = useMemo(
     () => recordingController ?? new MediaRecorderController(desktopApi.recording),
     [desktopApi, recordingController],
@@ -73,7 +78,8 @@ export function App({
 
   useEffect(() => {
     if (screen !== 'all') {
-      routeHeading.current?.focus()
+      globalThis.scrollTo?.({ top: 0, left: 0, behavior: 'auto' })
+      routeHeading.current?.focus({ preventScroll: true })
       return
     }
     const key = returnFocusKey.current
@@ -188,15 +194,23 @@ export function App({
     {recoveredActive && <RecordingPanel controls={recordingControls} templates={desktopApi.templates} onNavigate={() => undefined} />}
   </>
 
-  return <>
+  const activeNavigation = screen === 'templates' || screen === 'settings' ? screen : 'all'
+
+  return <AppShell active={activeNavigation} onNavigate={navigate} onImport={() => void importMeeting()}>
     <div hidden={screen !== 'all'}>
       {archiveNotice !== null && <div className="document-shell" role="alert">
         <p>{archiveNotice}</p>
         <button type="button" onClick={() => void importMeeting()}>가져오기 다시 시도</button>
         <button type="button" onClick={() => setArchiveNotice(null)}>알림 닫기</button>
       </div>}
-      <Dashboard meetings={meetings} recordingControls={recordingControls} templates={desktopApi.templates} onImport={() => void importMeeting()} onOpenMeeting={(id) => void openMeeting(id)} onNavigate={navigate} />
+      <Dashboard meetings={meetings} recordingControls={recordingControls} templates={desktopApi.templates} onOpenMeeting={(id) => void openMeeting(id)} onNavigate={navigate} />
     </div>
+    {screen === 'settings' && <main className="page-container settings-page">
+      <PageHeader ref={routeHeading} eyebrow="SETTINGS" title="설정" description="Nnote가 기록과 AI 처리를 사용하는 방식을 관리합니다." backLabel="전체 기록" onBack={backToAll} />
+      <AppearanceSettings preference={preference} onChange={setPreference} />
+      <ApiKeySettings settings={desktopApi.settings} />
+      <ProcessingProviderSettings settings={desktopApi.settings} />
+    </main>}
     {screen === 'detail' && document !== null && <MeetingDetail
       document={document}
       headingRef={routeHeading}
@@ -207,18 +221,11 @@ export function App({
       archive={desktopApi.archive}
       onRefresh={refreshOpenMeeting}
     />}
-    {screen === 'settings' && <main className="document-shell settings-page">
-      <button className="back-button" onClick={backToAll}>← 전체 기록</button>
-      <h1 ref={routeHeading} tabIndex={-1}>설정</h1>
-      <ApiKeySettings settings={desktopApi.settings} />
-      <ProcessingProviderSettings settings={desktopApi.settings} />
-    </main>}
-    {screen === 'templates' && <main className="document-shell template-page">
-      <button className="back-button" onClick={backToAll}>← 전체 기록</button>
-      <h1 ref={routeHeading} tabIndex={-1}>요약 템플릿</h1>
+    {screen === 'templates' && <main className="page-container template-page">
+      <PageHeader ref={routeHeading} eyebrow="TEMPLATES" title="요약 템플릿" description="회의 종류에 맞는 요약 구조와 지시문을 관리합니다." backLabel="전체 기록" onBack={backToAll} />
       <TemplateEditor templates={desktopApi.templates} />
     </main>}
-  </>
+  </AppShell>
 }
 
 function documentQuery(selector: string): HTMLElement | null {

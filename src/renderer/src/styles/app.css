@@ -71,7 +71,7 @@
 .status-failed { color: #ff8f91; }
 .status-recording { color: #aeb5ff; }
 .status-recoverable { color: #ffd08a; }
-.document-shell { width: min(960px, 100%); margin: 0 auto; padding: 28px 28px 80px; }
+.document-shell, .page-container { width: min(960px, 100%); margin: 0 auto; padding: 28px 28px 80px; }
 .document-shell > h1 { margin: 8px 0 24px; font-size: 32px; font-weight: 600; }
 .meeting-document { overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--radius-panel); background: var(--surface-1); }
 .document-header, .meeting-document > section { padding: 30px clamp(28px, 6vw, 56px); }
@@ -99,14 +99,14 @@
 .transcript-meta time { color: var(--ink-tertiary); font: 11px/1.4 ui-monospace, monospace; }
 .transcript-list p { margin: 0; color: var(--ink-muted); }
 .markdown-preview pre { overflow: auto; max-height: 360px; padding: 20px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface-2); color: var(--ink-muted); white-space: pre-wrap; font: 12px/1.65 ui-monospace, "SFMono-Regular", Consolas, monospace; }
-.document-shell > section:not(.meeting-document) { border: 1px solid var(--hairline); border-radius: var(--radius-card); background: var(--surface-1); padding: 24px; }
-.document-shell > section:not(.meeting-document) form, .document-shell > section:not(.meeting-document) label { display: grid; gap: 7px; }
-.document-shell > section:not(.meeting-document) form { max-width: 560px; gap: 12px; margin: 18px 0; }
-.document-shell > section[aria-label="요약 템플릿"] nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
-.document-shell > section[aria-label="요약 템플릿"] > div { display: grid; gap: 14px; }
-.document-shell > section[aria-label="요약 템플릿"] ol { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.document-shell > section[aria-label="요약 템플릿"] li { display: grid; grid-template-columns: minmax(160px, 1fr) 140px minmax(220px, 1.4fr) auto auto auto; gap: 8px; align-items: end; padding: 16px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface-2); }
-.document-shell > section[aria-label="요약 템플릿"] li label { color: var(--ink-subtle); font-size: 12px; }
+.page-container > section { border: 1px solid var(--hairline); border-radius: var(--radius-card); background: var(--surface-1); padding: 24px; }
+.page-container > section form, .page-container > section label { display: grid; gap: 7px; }
+.page-container > section form { max-width: 560px; gap: 12px; margin: 18px 0; }
+.page-container > section[aria-label="요약 템플릿"] nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+.page-container > section[aria-label="요약 템플릿"] > div { display: grid; gap: 14px; }
+.page-container > section[aria-label="요약 템플릿"] ol { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.page-container > section[aria-label="요약 템플릿"] li { display: grid; grid-template-columns: minmax(160px, 1fr) 140px minmax(220px, 1.4fr) auto auto auto; gap: 8px; align-items: end; padding: 16px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface-2); }
+.page-container > section[aria-label="요약 템플릿"] li label { color: var(--ink-subtle); font-size: 12px; }
 .settings-panel { display: grid; gap: 18px; }
 .settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .settings-heading h2 { margin: 0; font-size: 20px; }
@@ -180,12 +180,12 @@ div[role="dialog"] { border: 1px solid var(--hairline-strong); border-radius: va
   .topbar nav button { min-height: 36px; }
   .dashboard { grid-template-columns: minmax(0, 1fr); padding: 16px; }
   .recording-card { min-height: 450px; }
-  .document-shell { padding: 18px 12px 52px; }
+  .document-shell, .page-container { padding: 18px 12px 52px; }
   .document-header, .meeting-document > section { padding: 24px 20px; }
   .action-list li, .speaker-field > div { flex-wrap: wrap; }
   .speaker-field button { min-height: 44px; }
   .transcript-list li { grid-template-columns: 1fr; gap: 8px; }
-  .document-shell > section[aria-label="요약 템플릿"] li { grid-template-columns: 1fr; }
+  .page-container > section[aria-label="요약 템플릿"] li { grid-template-columns: 1fr; }
   .template-layout { grid-template-columns: 1fr; }
   .template-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .credential-form { grid-template-columns: 1fr; }

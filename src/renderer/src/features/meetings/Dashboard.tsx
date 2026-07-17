@@ -21,18 +21,8 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNavigate, templates, onImport }: DashboardProps) {
-  return <div className="app-shell">
-    <header className="topbar">
-      <button className="brand" type="button" onClick={() => onNavigate('all')} aria-label="Nnote 홈">Nnote</button>
-      <nav className="app-nav" aria-label="주요 메뉴">
-        <button type="button" onClick={() => onNavigate('all')}>전체 기록</button>
-        <button type="button" data-focus-key="nav-templates" onClick={() => onNavigate('templates')}>요약 템플릿</button>
-        <button type="button" data-focus-key="nav-settings" onClick={() => onNavigate('settings')}>설정</button>
-        {onImport !== undefined && <button type="button" onClick={onImport}>.nnote 가져오기</button>}
-      </nav>
-    </header>
-    <main className="dashboard">
+export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNavigate, templates }: DashboardProps) {
+  return <main className="dashboard">
       <span className="visually-hidden">Nnote</span>
       <section className="recording-card" aria-labelledby="new-meeting-heading">
         <p className="eyebrow">NEW MEETING</p>
@@ -67,5 +57,4 @@ export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNaviga
           </ul>}
       </section>
     </main>
-  </div>
 }

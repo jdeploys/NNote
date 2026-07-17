@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopApi } from '../../src/shared/contracts/desktopApi'
 import type { MeetingDocument, PublicMeeting } from '../../src/shared/contracts/meetingsApi'
 import { App } from '../../src/renderer/src/App'
@@ -40,7 +40,11 @@ function api(overrides: Partial<DesktopApi['meetings']> = {}): DesktopApi {
 }
 
 describe('App route and recording ownership', () => {
-  afterEach(cleanup)
+  beforeEach(() => vi.stubGlobal('scrollTo', vi.fn()))
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
 
   it('preserves active recording controls and identity across settings navigation without discard or a second start', async () => {
     const user = userEvent.setup()
@@ -129,6 +133,34 @@ describe('App route and recording ownership', () => {
     await user.click(screen.getByRole('button', { name: '← 전체 기록' }))
     await user.click(screen.getByRole('button', { name: '요약 템플릿' }))
     expect(screen.getByRole('heading', { name: '요약 템플릿' })).toHaveFocus()
+  })
+
+  it('moves every secondary route to the visible page top while keeping heading focus', async () => {
+    const user = userEvent.setup()
+    const scrollTo = vi.fn()
+    vi.stubGlobal('scrollTo', scrollTo)
+    render(<App desktopApi={api()} recordingController={{ start: vi.fn(), stop: vi.fn(), discard: vi.fn() }} />)
+    await user.click(await screen.findByRole('button', { name: '설정' }))
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'auto' })
+    expect(screen.getByRole('heading', { name: '설정' })).toHaveFocus()
+
+    const navigation = screen.getByRole('navigation', { name: '주요 메뉴' })
+    expect(navigation).toBeVisible()
+    expect(screen.getByRole('button', { name: '설정' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: '설정' })).toHaveAttribute('data-focus-key', 'nav-settings')
+    expect(screen.getByRole('button', { name: '요약 템플릿' })).toHaveAttribute('data-focus-key', 'nav-templates')
+    expect(screen.getByRole('button', { name: '.nnote 가져오기' })).toHaveClass('nav-import')
+  })
+
+  it('keeps one recording instance alive when the shared top navigation changes routes', async () => {
+    const user = userEvent.setup()
+    const controller = { start: vi.fn(async () => undefined), stop: vi.fn(), discard: vi.fn() }
+    render(<App desktopApi={api()} recordingController={controller} />)
+    await user.click(await screen.findByRole('button', { name: '녹음 시작' }))
+    await user.click(screen.getByRole('button', { name: '설정' }))
+    await user.click(screen.getByRole('button', { name: '전체 기록' }))
+    expect(screen.getByText('녹음 중')).toBeVisible()
+    expect(controller.start).toHaveBeenCalledTimes(1)
   })
 
   it('reaches recorded-to-processing from detail and refreshes the completed document', async () => {
