@@ -104,7 +104,7 @@ export function ProcessingProviderSettings({ settings }: { settings: SettingsApi
         </div>
         {openAiCapabilities && <div className="provider-notice"><p>OpenAI API 키를 사용하며 화자 분리를 지원합니다.</p></div>}
         {modelManager && transcription !== undefined && <WhisperModelSettings settings={settings} modelId={value.localWhisperModel} descriptor={transcription} onAvailabilityChanged={refreshDescriptors} />}
-        {cliStatus && summary !== undefined && <CodexCliStatus descriptor={summary} />}
+        {cliStatus && summary !== undefined && <CodexCliStatus descriptor={summary} onAvailabilityChanged={refreshDescriptors} />}
         {error !== null && <p role="alert" className="settings-alert">{error}</p>}
       </div>
     </details>

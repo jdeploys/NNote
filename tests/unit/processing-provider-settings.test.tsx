@@ -155,17 +155,56 @@ describe('processing provider settings visible outcomes', () => {
     expect(screen.getByText('로컬 추론이 아닌 클라우드 처리입니다.')).toBeVisible()
   })
 
-  it('renders Codex invalid-config guidance without editing global config', async () => {
-    const invalid = descriptors.map((descriptor) => descriptor.id === 'codex_cli'
-      ? { ...descriptor, availability: { available: false, code: 'CODEX_CONFIG_INVALID', message: 'C:/secret/config.toml' } }
+  it.each([
+    ['CODEX_NOT_INSTALLED', 'npm install --global @openai/codex', 'codex --version'],
+    ['CODEX_NOT_AUTHENTICATED', 'codex login', 'codex login status'],
+    ['CODEX_CONFIG_INVALID', 'codex login status', '오류에 표시된 설정 파일과 줄을 수정하세요.'],
+    ['CODEX_UNAVAILABLE', 'codex doctor', 'codex login status'],
+  ] as const)('shows actionable Codex troubleshooting for %s', async (code, firstStep, secondStep) => {
+    const unavailable = descriptors.map((descriptor) => descriptor.id === 'codex_cli'
+      ? { ...descriptor, availability: { available: false, code, message: 'C:/secret/config.toml' } }
       : descriptor)
-    const api = settingsApi({ listProcessingProviderDescriptors: vi.fn(async () => invalid) })
+    const api = settingsApi({ listProcessingProviderDescriptors: vi.fn(async () => unavailable) })
     render(<ProcessingProviderSettingsView settings={api} />)
     await expand()
     await userEvent.setup().selectOptions(screen.getByLabelText('요약 방식'), 'codex_cli')
-    expect(await screen.findByText('Codex CLI 설정이 올바르지 않습니다. 터미널에서 설정을 확인한 뒤 다시 시도하세요.')).toBeVisible()
-    expect(document.body.textContent).not.toContain('config.toml')
-    expect(screen.queryByRole('button', { name: /설정.*수정/ })).not.toBeInTheDocument()
+
+    const help = await screen.findByRole('region', { name: 'Codex CLI 문제 해결' })
+    expect(help).toHaveTextContent(firstStep)
+    expect(help).toHaveTextContent(secondStep)
+    expect(screen.getByRole('button', { name: 'Codex CLI 상태 다시 확인' })).toBeVisible()
+    expect(document.body.textContent).not.toContain('C:/secret')
+  })
+
+  it('refreshes Codex invalid-config status without changing the selected providers', async () => {
+    const invalid = descriptors.map((descriptor) => descriptor.id === 'codex_cli'
+      ? { ...descriptor, availability: { available: false, code: 'CODEX_CONFIG_INVALID', message: null } }
+      : descriptor)
+    const listDescriptors = vi.fn()
+      .mockResolvedValueOnce(descriptors)
+      .mockResolvedValueOnce(invalid)
+      .mockResolvedValue(descriptors)
+    const api = settingsApi({ listProcessingProviderDescriptors: listDescriptors })
+    render(<ProcessingProviderSettingsView settings={api} />)
+    await expand()
+    await userEvent.setup().selectOptions(screen.getByLabelText('요약 방식'), 'codex_cli')
+    await screen.findByText('Codex CLI 설정이 올바르지 않습니다. 터미널에서 설정을 확인한 뒤 다시 시도하세요.')
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Codex CLI 상태 다시 확인' }))
+
+    expect(await screen.findByText('Codex CLI가 설치되고 인증되어 사용할 수 있습니다.')).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Codex CLI 문제 해결' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('전사 방식')).toHaveValue('openai')
+    expect(screen.getByLabelText('요약 방식')).toHaveValue('codex_cli')
+  })
+
+  it('keeps available Codex status free of troubleshooting instructions', async () => {
+    render(<ProcessingProviderSettingsView settings={settingsApi()} />)
+    await expand()
+    await userEvent.setup().selectOptions(screen.getByLabelText('요약 방식'), 'codex_cli')
+    expect(await screen.findByText('Codex CLI가 설치되고 인증되어 사용할 수 있습니다.')).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Codex CLI 문제 해결' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Codex CLI 상태 다시 확인' })).not.toBeInTheDocument()
   })
 
   it('keeps OpenAI selectors on API-key and speaker capability without local or Codex panels', async () => {

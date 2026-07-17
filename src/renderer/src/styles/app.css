@@ -120,6 +120,11 @@ h1, h2, h3 { letter-spacing: -.035em; }
 .model-status, .cli-status { display: grid; gap: 12px; }
 .provider-status-row { display: flex; align-items: center; gap: 9px; min-height: 24px; }
 .provider-status-row p { margin: 0; color: var(--ink-muted); }
+.codex-troubleshooting { display: grid; justify-items: start; gap: 9px; padding: 14px 16px; border: 1px solid rgb(229 170 72 / 28%); border-radius: var(--radius-control); background: rgb(229 170 72 / 7%); color: var(--ink-subtle); }
+.codex-troubleshooting strong { color: var(--ink); }
+.codex-troubleshooting ol { display: grid; gap: 6px; margin: 0; padding-left: 20px; }
+.codex-troubleshooting code { color: var(--ink); font: 12px/1.5 ui-monospace, monospace; }
+.codex-troubleshooting button { min-height: 34px; margin-top: 2px; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--ink-tertiary); box-shadow: 0 0 0 3px rgb(255 255 255 / 4%); }
 .status-dot.is-ready { background: #78d990; }
 .status-dot.is-warning { background: #e5aa48; }
