@@ -1,12 +1,19 @@
 import { expect, test, type Page } from '@playwright/test'
+
 test.skip(
   !['win32', 'darwin'].includes(process.platform),
   `Processing settings snapshots are supported on Windows and macOS; ${process.platform} is unsupported.`,
 )
 
-async function open(page: Page, state: string, expanded: boolean) {
-  await page.goto(`/?state=${state}`)
-  await expect(page.getByRole('heading', { name: '설정', exact: true })).toBeVisible()
+type FixtureTheme = 'light' | 'dark'
+
+async function open(page: Page, state: string, expanded: boolean, theme: FixtureTheme = 'light') {
+  await page.goto(`/?state=${state}&theme=${theme}`)
+  await page.getByRole('button', { name: '설정', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '설정', exact: true })).toBeInViewport()
+  expect(await page.evaluate(() => scrollY)).toBe(0)
+  expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme)
+
   const apiCard = page.getByRole('region', { name: 'API 키 설정' })
   await expect(apiCard).toContainText('저장된 API 키 삭제')
   await expect(apiCard.getByText('설정됨', { exact: true })).toBeVisible()
@@ -51,15 +58,30 @@ for (const [state, snapshot, expanded] of [
   ['codex-available', 'processing-codex-available.png', true],
   ['codex-unavailable', 'processing-codex-unavailable.png', true],
 ] as const) {
-  test(`settings visibly show ${state}`, async ({ page }) => {
+  test(`real settings route visibly shows ${state}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 800 })
     await open(page, state, expanded)
-    await expect(page).toHaveScreenshot(snapshot, { animations: 'disabled', fullPage: true, omitBackground: false })
+    await page.locator('.processing-settings').scrollIntoViewIfNeeded()
+    await expect(page).toHaveScreenshot(snapshot, { animations: 'disabled', fullPage: false, omitBackground: false })
   })
 }
 
-test('expanded processing settings fit 640px without horizontal overflow', async ({ page }) => {
-  await page.setViewportSize({ width: 640, height: 900 })
-  await open(page, 'whisper-installed', true)
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(640)
-  await expect(page.getByLabel('로컬 모델')).toBeVisible()
-})
+for (const theme of ['light', 'dark'] as const) {
+  test(`real settings ${theme} route keeps its heading and theme action in the 1200x800 viewport`, async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 800 })
+    await open(page, 'provider-defaults', false, theme)
+    await page.evaluate(() => scrollTo({ top: 0, left: 0, behavior: 'auto' }))
+    await expect(page.getByRole('heading', { name: '설정', exact: true })).toBeInViewport()
+    await expect(page.getByRole('radio', { name: theme === 'light' ? '라이트' : '다크' })).toBeInViewport()
+    await expect(page).toHaveScreenshot(`settings-${theme}.png`, { animations: 'disabled', fullPage: false, omitBackground: false })
+  })
+}
+
+for (const width of [938, 640]) {
+  test(`expanded real settings route has no horizontal overflow at ${width}x800`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await open(page, 'whisper-installed', true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await expect(page.getByLabel('로컬 모델')).toBeVisible()
+  })
+}

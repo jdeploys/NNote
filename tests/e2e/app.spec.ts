@@ -24,6 +24,25 @@ test('launches the real built app securely and records fake microphone audio', a
     await expect(window.getByLabel('요약 템플릿')).toBeVisible()
     await expect(window.getByLabel('원본 오디오')).toBeVisible()
 
+    const electronBounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getBounds())
+    expect(electronBounds).toMatchObject({ width: 1200, height: 800 })
+    expect(await window.evaluate(() => ({ outerWidth, outerHeight }))).toMatchObject({ outerWidth: 1200, outerHeight: 800 })
+
+    await window.getByRole('button', { name: '설정', exact: true }).click()
+    await expect(window.getByRole('heading', { name: '설정', exact: true })).toBeInViewport()
+    expect(await window.evaluate(() => ({
+      scrollY,
+      theme: document.documentElement.dataset.theme,
+      background: getComputedStyle(document.body).backgroundColor,
+    }))).toMatchObject({
+      scrollY: 0,
+      theme: expect.stringMatching(/light|dark/),
+      background: expect.not.stringMatching(/rgba\(0, 0, 0, 0\)|transparent/),
+    })
+    await expect(window.getByRole('button', { name: '전체 기록', exact: true })).toBeVisible()
+    await window.getByRole('button', { name: '전체 기록', exact: true }).click()
+    await expect(window.getByRole('heading', { name: '새 회의' })).toBeInViewport()
+
     await window.getByRole('button', { name: '녹음 시작' }).click()
     await expect(window.getByText('녹음 중')).toBeVisible()
     await window.waitForTimeout(500)

@@ -1,17 +1,18 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
+import '@fontsource-variable/inter/index.css'
 import '../../../src/renderer/src/styles/tokens.css'
+import '../../../src/renderer/src/styles/themes.css'
+import '../../../src/renderer/src/styles/globals.css'
 import '../../../src/renderer/src/styles/app.css'
 import './visual.css'
-import { Dashboard } from '../../../src/renderer/src/features/meetings/Dashboard'
-import { MeetingDetail } from '../../../src/renderer/src/features/meetings/MeetingDetail'
-import { ApiKeySettings } from '../../../src/renderer/src/features/settings/ApiKeySettings'
-import { ProcessingProviderSettings } from '../../../src/renderer/src/features/settings/ProcessingProviderSettings'
-import { TemplateEditor } from '../../../src/renderer/src/features/templates/TemplateEditor'
+import { App } from '../../../src/renderer/src/App'
+import type { DesktopApi } from '../../../src/shared/contracts/desktopApi'
+import type { MeetingDocument, PublicMeeting } from '../../../src/shared/contracts/meetingsApi'
+import type { RecordingSnapshot } from '../../../src/renderer/src/features/recording/mediaRecorderController'
 
 const now = '2026-07-15T00:00:00.000Z'
 const meeting = (id: string, title: string, status: 'completed' | 'recorded' | 'failed' | 'recoverable') => ({ id, title, status, createdAt: now, updatedAt: now, durationMs: 3_845_000, audioPolicy: 'keep' as const, hasAudio: status === 'completed', audioByteCount: 12_000, selectedTemplateId: null })
-const controls = { start: async () => {}, stop: async () => {}, discard: async () => {}, pause: async () => {}, resume: async () => {} }
 const templateItems = [
   { id: 'interview', name: '고객 인터뷰', isDefault: false, sections: [
     { id: '20000000-0000-4000-8000-000000000001', title: '고객의 문제', kind: 'paragraph' as const, prompt: '고객이 겪는 핵심 문제를 요약하세요.' },
@@ -20,18 +21,51 @@ const templateItems = [
   ], createdAt: now, updatedAt: now },
   { id: 'default', name: '기본 템플릿', isDefault: true, sections: [{ id: '10000000-0000-4000-8000-000000000001', title: '핵심 요약', kind: 'paragraph' as const, prompt: '요약' }], createdAt: now, updatedAt: now },
 ]
-const templates = { list: async () => templateItems, create: async () => { throw new Error() }, update: async () => { throw new Error() }, reorderSections: async () => { throw new Error() }, delete: async () => {} }
-const state = new URLSearchParams(location.search).get('state') ?? 'idle'
-const providerSettings = state.startsWith('whisper-')
+let fixtureTemplateItems = templateItems
+const templates = {
+  list: async () => fixtureTemplateItems,
+  create: async (input: { name: string; sections: Array<{ title: string; kind: 'paragraph' | 'bullet_list' | 'action_items'; prompt: string }> }) => {
+    const created = {
+      id: 'new-template', name: input.name, isDefault: false,
+      sections: input.sections.map((section, index) => ({
+        ...section,
+        id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      })),
+      createdAt: now, updatedAt: now,
+    }
+    fixtureTemplateItems = [...fixtureTemplateItems, created]
+    return created
+  },
+  update: async (id: string, input: { name?: string; sections?: typeof templateItems[number]['sections'] }) => {
+    const current = fixtureTemplateItems.find((item) => item.id === id)!
+    const updated = { ...current, ...input, updatedAt: now }
+    fixtureTemplateItems = fixtureTemplateItems.map((item) => item.id === id ? updated : item)
+    return updated
+  },
+  reorderSections: async (id: string, orderedSectionIds: string[]) => {
+    const current = fixtureTemplateItems.find((item) => item.id === id)!
+    const byId = new Map(current.sections.map((section) => [section.id, section]))
+    const updated = { ...current, sections: orderedSectionIds.map((sectionId) => byId.get(sectionId)!), updatedAt: now }
+    fixtureTemplateItems = fixtureTemplateItems.map((item) => item.id === id ? updated : item)
+    return updated
+  },
+  delete: async (id: string) => { fixtureTemplateItems = fixtureTemplateItems.filter((item) => item.id !== id) },
+}
+const fixtureState = new URLSearchParams(location.search).get('state') ?? 'idle'
+const fixtureTheme = new URLSearchParams(location.search).get('theme')
+if (fixtureTheme === 'light' || fixtureTheme === 'dark') localStorage.setItem('nnote.theme', fixtureTheme)
+else localStorage.removeItem('nnote.theme')
+
+const providerSettings = fixtureState.startsWith('whisper-')
   ? { transcriptionProvider: 'local_whisper' as const, summaryProvider: 'openai' as const, localWhisperModel: 'base' as const }
-  : state.startsWith('codex-')
+  : fixtureState.startsWith('codex-')
     ? { transcriptionProvider: 'openai' as const, summaryProvider: 'codex_cli' as const, localWhisperModel: 'base' as const }
     : { transcriptionProvider: 'openai' as const, summaryProvider: 'openai' as const, localWhisperModel: 'base' as const }
 const providerDescriptors = [
   { id: 'openai' as const, stage: 'transcription' as const, displayName: 'OpenAI API', availability: { available: true, code: null, message: null }, privacy: 'audio_cloud' as const, capabilities: ['api_key', 'speaker_diarization'] as const },
-  { id: 'local_whisper' as const, stage: 'transcription' as const, displayName: '로컬 Whisper', availability: { available: state !== 'whisper-downloading', code: state === 'whisper-downloading' ? 'LOCAL_WHISPER_MODEL_UNAVAILABLE' : null, message: null }, privacy: 'local' as const, capabilities: ['model_manager'] as const },
+  { id: 'local_whisper' as const, stage: 'transcription' as const, displayName: '로컬 Whisper', availability: { available: fixtureState !== 'whisper-downloading', code: fixtureState === 'whisper-downloading' ? 'LOCAL_WHISPER_MODEL_UNAVAILABLE' : null, message: null }, privacy: 'local' as const, capabilities: ['model_manager'] as const },
   { id: 'openai' as const, stage: 'summary' as const, displayName: 'OpenAI API', availability: { available: true, code: null, message: null }, privacy: 'text_cloud' as const, capabilities: ['api_key'] as const },
-  { id: 'codex_cli' as const, stage: 'summary' as const, displayName: 'Codex CLI', availability: state !== 'codex-unavailable' ? { available: true, code: null, message: null } : { available: false, code: 'CODEX_CONFIG_INVALID', message: null }, privacy: 'text_cloud' as const, capabilities: ['cli_status'] as const },
+  { id: 'codex_cli' as const, stage: 'summary' as const, displayName: 'Codex CLI', availability: fixtureState !== 'codex-unavailable' ? { available: true, code: null, message: null } : { available: false, code: 'CODEX_CONFIG_INVALID', message: null }, privacy: 'text_cloud' as const, capabilities: ['cli_status'] as const },
 ]
 const baseBytes = 147_951_465
 const settings = {
@@ -42,22 +76,22 @@ const settings = {
   updateProcessingProviders: async (input: { transcriptionProvider: 'openai' | 'local_whisper'; summaryProvider: 'openai' | 'codex_cli'; localWhisperModel: 'base' | 'small' }) => input,
   listProcessingProviderDescriptors: async () => providerDescriptors,
   listWhisperModels: async () => [
-    { modelId: 'base' as const, state: state === 'whisper-installed' ? 'installed' as const : state === 'whisper-downloading' ? 'downloading' as const : 'not_installed' as const, expectedBytes: baseBytes, receivedBytes: state === 'whisper-downloading' ? 73_975_732 : state === 'whisper-installed' ? baseBytes : 0, error: null },
+    { modelId: 'base' as const, state: fixtureState === 'whisper-installed' ? 'installed' as const : fixtureState === 'whisper-downloading' ? 'downloading' as const : 'not_installed' as const, expectedBytes: baseBytes, receivedBytes: fixtureState === 'whisper-downloading' ? 73_975_732 : fixtureState === 'whisper-installed' ? baseBytes : 0, error: null },
     { modelId: 'small' as const, state: 'not_installed' as const, expectedBytes: 487_601_967, receivedBytes: 0, error: null },
   ],
   downloadWhisperModel: async () => { throw new Error() },
   deleteWhisperModel: async () => { throw new Error() },
   onWhisperModelProgress: (listener: (progress: { modelId: 'base' | 'small'; receivedBytes: number; totalBytes: number }) => void) => {
-    if (state === 'whisper-downloading') queueMicrotask(() => listener({ modelId: 'base', receivedBytes: 73_975_732, totalBytes: baseBytes }))
+    if (fixtureState === 'whisper-downloading') queueMicrotask(() => listener({ modelId: 'base', receivedBytes: 73_975_732, totalBytes: baseBytes }))
     return () => {}
   },
 }
 const archive = { exportMeeting: async () => ({ status: 'cancelled' as const }), exportMarkdown: async () => ({ status: 'cancelled' as const }), importMeeting: async () => ({ status: 'cancelled' as const }) }
 const processing = { getStatus: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), process: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), retry: async () => ({ meetingId: 'meeting-1', state: 'completed' as const, failedStage: null, retryable: false, audioRequired: false, error: null }), onProgress: () => () => {} }
-const common = state === 'failed' ? [meeting('failed', '주간 운영 회의', 'failed'), meeting('done', '제품 방향성 회의', 'completed')]
-  : state === 'recoverable' ? [meeting('recover', '중단된 고객 인터뷰', 'recoverable'), meeting('done', '제품 방향성 회의', 'completed')]
+const common = fixtureState === 'failed' ? [meeting('failed', '주간 운영 회의', 'failed'), meeting('done', '제품 방향성 회의', 'completed')]
+  : fixtureState === 'recoverable' ? [meeting('recover', '중단된 고객 인터뷰', 'recoverable'), meeting('done', '제품 방향성 회의', 'completed')]
     : [meeting('done', '제품 방향성 회의', 'completed'), meeting('recorded', '디자인 리뷰', 'recorded')]
-const detail = {
+const detail: MeetingDocument = {
   meeting: meeting('meeting-1', '제품 방향성 회의', 'completed'), audioUrl: 'nnote-media://meeting/bWVldGluZy0x',
   speakers: [{ id: '0:A', meetingId: 'meeting-1', displayName: '수현' }, { id: '0:B', meetingId: 'meeting-1', displayName: '민지' }],
   transcript: [
@@ -72,13 +106,88 @@ const detail = {
   ],
   actionItems: [{ id: 'x', meetingId: 'meeting-1', content: '온보딩 흐름 초안 작성', assigneeSpeakerId: '0:B', dueAt: null, completed: false }],
 }
-const view = state === 'completed'
-  ? <MeetingDetail document={detail} archive={archive} processing={processing} initialProcessingStatus={{ meetingId: 'meeting-1', state: 'completed', failedStage: null, retryable: false, audioRequired: false, error: null }} onBack={() => {}} onRenameSpeaker={async () => detail.speakers[1]} />
-  : state === 'templates'
-    ? <main className="document-shell"><button type="button">← 전체 기록</button><h1>요약 템플릿</h1><TemplateEditor templates={templates} /></main>
-    : state === 'settings'
-      ? <main className="document-shell"><button type="button">← 전체 기록</button><h1>설정</h1><ApiKeySettings settings={settings} /></main>
-    : state.startsWith('provider-') || state.startsWith('whisper-') || state.startsWith('codex-')
-      ? <main className="document-shell settings-page"><button type="button">← 전체 기록</button><h1>설정</h1><ApiKeySettings settings={settings} /><ProcessingProviderSettings settings={settings} /></main>
-      : <Dashboard meetings={state === 'idle' ? [] : common} recordingControls={controls} templates={templates} onImport={() => {}} onOpenMeeting={() => {}} onNavigate={() => {}} />
-createRoot(document.getElementById('root')!).render(view)
+
+function desktopApiFor(state: string): DesktopApi {
+  const meetings = state === 'completed'
+    ? [detail.meeting]
+    : state === 'idle'
+      ? []
+      : common
+
+  return {
+    settings,
+    templates,
+    processing,
+    archive,
+    meetings: {
+      list: async () => meetings as PublicMeeting[],
+      get: async () => detail,
+      createRecording: async (input) => ({
+        ...meeting('active-meeting', input.title, 'recorded'),
+        audioPolicy: input.audioPolicy ?? 'delete_after_processing',
+        selectedTemplateId: input.selectedTemplateId ?? null,
+      }),
+      renameSpeaker: async (_meetingId, speakerId, displayName) => ({
+        id: speakerId,
+        meetingId: detail.meeting.id,
+        displayName,
+      }),
+    },
+    recording: {
+      start: async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 }),
+      cancelStart: async () => {},
+      appendChunk: async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1 }),
+      pause: async () => {},
+      resume: async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 1 }),
+      stop: async () => {},
+      discard: async () => {},
+    },
+    recovery: {
+      scan: async () => [],
+      recover: async () => ({ totalBytes: 0, durationMs: 0, warn: false, rolledToPartIndex: null, activePartIndex: 0, nextChunkIndex: 0 }),
+      suspend: async () => {},
+      keepAsFile: async () => {},
+      exportOnly: async () => ({ status: 'cancelled' }),
+      discard: async () => {},
+    },
+  }
+}
+
+function recordingControllerFor(_state: string) {
+  const listeners = new Set<(snapshot: RecordingSnapshot) => void>()
+  let snapshot: RecordingSnapshot = {
+    phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,
+    activePartIndex: 0, partCount: 0, microphone: 'inactive', localSave: 'idle',
+  }
+  const publish = (patch: Partial<RecordingSnapshot>) => {
+    snapshot = { ...snapshot, ...patch }
+    for (const listener of listeners) listener(snapshot)
+  }
+  const reset = () => publish({
+    phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,
+    activePartIndex: 0, partCount: 0, microphone: 'inactive', localSave: 'idle',
+  })
+
+  return {
+    subscribe(listener: (snapshot: RecordingSnapshot) => void) {
+      listeners.add(listener)
+      listener(snapshot)
+      return () => listeners.delete(listener)
+    },
+    start: async (meetingId: string) => publish({
+      phase: 'recording', meetingId, durationMs: 75_000, totalBytes: 1_572_864,
+      activePartIndex: 0, partCount: 1, microphone: 'active', localSave: 'saved',
+    }),
+    stop: async () => reset(),
+    discard: async () => reset(),
+    pause: async () => publish({ phase: 'paused', microphone: 'paused' }),
+    resume: async () => publish({ phase: 'recording', microphone: 'active' }),
+  }
+}
+
+const fixtureApi = desktopApiFor(fixtureState)
+const fixtureController = recordingControllerFor(fixtureState)
+
+createRoot(document.getElementById('root')!).render(
+  <App desktopApi={fixtureApi} recordingController={fixtureController} />,
+)
