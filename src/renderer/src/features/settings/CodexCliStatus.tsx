@@ -11,7 +11,7 @@ const troubleshooting: Readonly<Record<string, readonly string[]>> = {
   CODEX_NOT_INSTALLED: ['npm install --global @openai/codex', 'codex --version'],
   CODEX_NOT_AUTHENTICATED: ['codex login', 'codex login status'],
   CODEX_CONFIG_INVALID: ['codex login status', '오류에 표시된 설정 파일과 줄을 수정하세요.', 'codex login status'],
-  CODEX_UNAVAILABLE: ['codex doctor', 'codex login status'],
+  CODEX_UNAVAILABLE: ['codex --version', 'codex login status'],
 }
 
 interface CodexCliStatusProps {

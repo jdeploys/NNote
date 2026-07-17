@@ -159,7 +159,7 @@ describe('processing provider settings visible outcomes', () => {
     ['CODEX_NOT_INSTALLED', 'npm install --global @openai/codex', 'codex --version'],
     ['CODEX_NOT_AUTHENTICATED', 'codex login', 'codex login status'],
     ['CODEX_CONFIG_INVALID', 'codex login status', '오류에 표시된 설정 파일과 줄을 수정하세요.'],
-    ['CODEX_UNAVAILABLE', 'codex doctor', 'codex login status'],
+    ['CODEX_UNAVAILABLE', 'codex --version', 'codex login status'],
   ] as const)('shows actionable Codex troubleshooting for %s', async (code, firstStep, secondStep) => {
     const unavailable = descriptors.map((descriptor) => descriptor.id === 'codex_cli'
       ? { ...descriptor, availability: { available: false, code, message: 'C:/secret/config.toml' } }
