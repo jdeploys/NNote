@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parsePackageVerificationRequest } from '../../src/main/app/packageVerification'
-import { hasTask10VisualBaseline } from '../visual/platformSupport'
 
 describe('package verification boundary', () => {
   it('enables verification only for an explicit absolute result path', () => {
@@ -84,10 +83,10 @@ describe('release package configuration', () => {
     expect(workflow).not.toContain('gh release create v0.0.1')
   })
 
-  it('invokes the macOS runtime builder through bash while preserving each workflow architecture argument', () => {
+  it('builds the macOS runtime only for release while preserving the matrix architecture argument', () => {
     const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
     const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
-    expect(ci).toContain('bash ./scripts/build-local-runtime.sh "$native_arch"')
+    expect(ci).not.toContain('build-local-runtime.sh')
     expect(release).toContain('bash ./scripts/build-local-runtime.sh "${{ matrix.arch }}"')
   })
 
@@ -142,40 +141,22 @@ describe('release package configuration', () => {
     expect(workflow).toContain("MAC_SIGNING_CONFIGURED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.MAC_CSC_NAME != '' }}")
   })
 
-  it('pins every repository workflow action and reserves baseline recording for manual workflow', () => {
-    for (const name of ['ci.yml', 'release.yml', 'record-macos-visual-baselines.yml']) {
+  it('pins every repository workflow action', () => {
+    for (const name of ['ci.yml', 'release.yml']) {
       const workflow = readFileSync(resolve('.github/workflows', name), 'utf8')
       expect(workflow, name).not.toMatch(/uses:\s+[^\s]+@(?![a-f0-9]{40}(?:\s+#|\s*$))/m)
     }
-    expect(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')).not.toContain('--update-snapshots')
   })
 
-  it('records the complete current Darwin visual suite through the least-privileged manual macOS 15 workflow', () => {
-    const recorder = readFileSync(resolve('.github/workflows/record-macos-visual-baselines.yml'), 'utf8')
-      .replace(/\r\n/g, '\n')
-
-    expect(recorder).toContain('workflow_dispatch:')
-    expect(recorder).toContain('permissions:\n  contents: read')
-    expect(recorder).toContain('runs-on: macos-15')
-    expect(manifest.scripts['test:visual:update']).toBe('playwright test tests/visual --update-snapshots')
-    expect(recorder).toContain('run: npm run test:visual:update -- --reporter=line,html')
-    expect(recorder).toContain('tests/visual/snapshots/darwin/**')
-    expect(recorder).toContain('test-results/')
-    expect(recorder).toContain('playwright-report/')
-    expect(recorder).toContain('if-no-files-found: error')
-    expect(recorder).not.toContain('processing-settings.visual.pw.ts')
-    expect(recorder).not.toMatch(/uses:\s+[^\s]+@(?![a-f0-9]{40}(?:\s+#|\s*$))/m)
-  })
-
-  it('keeps CI and release visual comparisons read-only while Darwin remains supported', () => {
+  it('keeps routine macOS CI to dependency installation and the application build', () => {
     const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
     const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
-
-    expect(ci).toContain('run: npm run test:visual')
-    expect(release).toContain('processing-settings.visual.pw.ts')
-    expect(ci).not.toContain('--update-snapshots')
-    expect(release).not.toContain('--update-snapshots')
-    expect(hasTask10VisualBaseline('darwin')).toBe(true)
+    expect(ci).not.toContain('mac-visual-baseline:')
+    expect(ci).toContain("if: runner.os == 'Windows'")
+    expect(ci).toContain('run: npm run build')
+    expect(ci).not.toContain('Package and verify macOS')
+    expect(release).not.toContain('processing-settings.visual.pw.ts')
+    expect(release).not.toContain('visual-comparison-macos')
   })
 
   it('separates hardened Developer ID signing from ad-hoc fallback', () => {

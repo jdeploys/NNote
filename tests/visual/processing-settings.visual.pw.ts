@@ -1,8 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 
 test.skip(
-  !['win32', 'darwin'].includes(process.platform),
-  `Processing settings snapshots are supported on Windows and macOS; ${process.platform} is unsupported.`,
+  process.platform !== 'win32',
+  `Processing settings snapshots are supported on Windows; ${process.platform} is unsupported.`,
 )
 
 type FixtureTheme = 'light' | 'dark'

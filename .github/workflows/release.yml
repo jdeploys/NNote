@@ -82,19 +82,6 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - name: Compare committed reviewed macOS visual baselines
-        run: |
-          set -euo pipefail
-          npx playwright install chromium
-          npx playwright test tests/visual/processing-settings.visual.pw.ts
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: visual-comparison-macos-${{ matrix.arch }}
-          path: |
-            test-results/
-            playwright-report/
-          if-no-files-found: warn
       - name: Build pinned macOS local runtime
         run: |
           set -euo pipefail

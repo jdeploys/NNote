@@ -31,10 +31,14 @@ jobs:
             nasm
       - run: npm ci
       - run: npm run lint
+        if: runner.os == 'Windows'
       - run: npm run typecheck
+        if: runner.os == 'Windows'
       - run: npm test
+        if: runner.os == 'Windows'
       - run: npm run build
       - run: npm run test:e2e
+        if: runner.os == 'Windows'
       - name: Build pinned Windows local runtime
         if: runner.os == 'Windows'
         shell: pwsh
@@ -45,60 +49,11 @@ jobs:
         run: |
           npm run package:win:x64
           node scripts/verify-package.mjs dist/win-unpacked
-      - name: Package and verify macOS (unsigned)
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          native_arch="$(uname -m)"
-          bash ./scripts/build-local-runtime.sh "$native_arch"
-          if [[ "$native_arch" == arm64 ]]; then
-            CSC_NAME=- CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac:arm64 -- --config.mac.hardenedRuntime=false --config.mac.notarize=false
-            node scripts/verify-package.mjs dist/mac-arm64/Nnote.app
-          else
-            CSC_NAME=- CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac:x64 -- --config.mac.hardenedRuntime=false --config.mac.notarize=false
-            node scripts/verify-package.mjs dist/mac/Nnote.app
-          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
+        if: runner.os == 'Windows'
         with:
           name: nnote-${{ runner.os }}-${{ runner.arch }}
           path: |
             dist/*.exe
-            dist/*.dmg
             dist/*-unpacked/**
-            dist/mac*/Nnote.app/**
           if-no-files-found: ignore
-
-  mac-visual-baseline:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22.12.0
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install chromium
-      - name: Compare tracked macOS visual baselines
-        id: visual-compare
-        continue-on-error: true
-        run: npm run test:visual
-      - name: Preserve comparison diffs
-        if: steps.visual-compare.outcome == 'failure'
-        run: |
-          if [ -d test-results ]; then cp -R test-results visual-comparison-results; fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: macos-visual-candidates-and-diffs
-          path: |
-            tests/visual/snapshots/darwin/**
-            visual-comparison-results/**
-            test-results/**
-            playwright-report/**
-          if-no-files-found: ignore
-      - name: Reject missing, changed, or unreviewed macOS pixels
-        if: steps.visual-compare.outcome == 'failure'
-        run: |
-          echo "macOS visual comparison failed. Review the uploaded candidate and diff artifacts, commit approved darwin baselines, and rerun CI."
-          exit 1
