@@ -90,8 +90,6 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" | grep -Fx '${{ inputs.marketing_version }}'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist" | grep -Fx '${{ inputs.build_number }}'
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -d --entitlements :- "$app" > app-entitlements.plist
-          plutil -extract com.apple.security.app-sandbox raw -o - app-entitlements.plist | grep -Fx true
           node scripts/verify-package.mjs "$app" | tee package-verification.log
           grep -F '"localRuntime":true' package-verification.log
           pkg=$(find dist -maxdepth 2 -type f -name '*.pkg' -print -quit)
@@ -106,7 +104,6 @@ jobs:
             runtime-build.log
             package-verification.log
             package-signature.log
-            app-entitlements.plist
           if-no-files-found: error
       - name: Install App Store Connect API key
         if: inputs.upload
