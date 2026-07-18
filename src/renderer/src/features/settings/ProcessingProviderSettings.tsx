@@ -83,7 +83,7 @@ export function ProcessingProviderSettings({ settings }: { settings: SettingsApi
   const refreshCodexStatus = () => runOperation('codex_refresh', refreshDescriptors)
 
   if (value === null) return <section className="processing-settings" aria-label="처리 방식 설정">
-    <div className="settings-heading"><div><p className="eyebrow">PROCESSING</p><h2><Icon name="model" />고급 처리 옵션</h2></div></div>
+    <div className="settings-heading"><div><p className="eyebrow">PROCESSING</p><h2><Icon name="model" />처리 방식</h2></div></div>
     {error !== null ? <p role="alert" className="settings-alert">{error}</p> : <p className="settings-meta">처리 설정을 불러오는 중입니다.</p>}
   </section>
 
@@ -91,25 +91,40 @@ export function ProcessingProviderSettings({ settings }: { settings: SettingsApi
   const summary = descriptors.find((item) => item.stage === 'summary' && item.id === value.summaryProvider)
   const modelManager = transcription?.capabilities.includes('model_manager') === true
   const cliStatus = summary?.capabilities.includes('cli_status') === true
-  const openAiCapabilities = transcription?.privacy === 'audio_cloud'
-    && transcription.capabilities.includes('api_key')
-    && transcription.capabilities.includes('speaker_diarization')
+  const mode = value.transcriptionProvider === 'local_whisper' ? 'local' : 'openai'
+  const chooseMode = (nextMode: 'openai' | 'local') => {
+    if (nextMode === mode) return
+    const localSummary = descriptors.some((item) => item.stage === 'summary' && item.id === 'codex_cli')
+      ? 'codex_cli'
+      : value.summaryProvider
+    void persist({
+      ...value,
+      transcriptionProvider: nextMode === 'openai' ? 'openai' : 'local_whisper',
+      summaryProvider: nextMode === 'openai' ? 'openai' : localSummary,
+    })
+  }
 
   return <section className="processing-settings" aria-label="처리 방식 설정">
-    <details className="advanced-settings">
-      <summary>
-        <span><span className="eyebrow">ADVANCED</span><strong><Icon name="model" />고급 처리 옵션</strong></span>
+    <div className="settings-heading"><div><p className="eyebrow">PROCESSING</p><h2><Icon name="model" />처리 방식</h2></div></div>
+    <div className="processing-mode-options" role="radiogroup" aria-label="처리 방식">
+      <label>
+        <input type="radio" name="processing-mode" value="openai" checked={mode === 'openai'} disabled={busy} onChange={() => chooseMode('openai')} />
+        <span><strong>OpenAI</strong><small>API 키로 음성 변환과 회의록 작성을 처리합니다.</small></span>
+      </label>
+      <label>
+        <input type="radio" name="processing-mode" value="local" checked={mode === 'local'} disabled={busy} onChange={() => chooseMode('local')} />
+        <span><strong>로컬 설정</strong><small>이 Mac의 Whisper 모델로 음성을 변환합니다.</small></span>
+      </label>
+    </div>
+    {mode === 'local' && <div className="local-settings" role="region" aria-label="로컬 설정">
+      <div className="local-settings-heading">
+        <span><span className="eyebrow">LOCAL</span><strong><Icon name="model" />로컬 설정</strong></span>
         <span className="advanced-summary">{transcription?.displayName ?? value.transcriptionProvider} · {summary?.displayName ?? value.summaryProvider}</span>
-      </summary>
-      <div className="advanced-settings-content">
+      </div>
+      <div className="local-settings-content">
         <FieldHelp>변경 사항은 앞으로 시작하거나 다시 시도하는 처리에만 적용되며, 기존 결과는 다시 작성하지 않습니다.</FieldHelp>
         <div className="provider-grid">
-          <label>텍스트 변환 방식
-            <select value={value.transcriptionProvider} disabled={busy} onChange={(event) => void persist({ ...value, transcriptionProvider: event.target.value as ProcessingSettings['transcriptionProvider'] })}>
-              {descriptors.filter((item) => item.stage === 'transcription').map((item) => <option key={`${item.stage}-${item.id}`} value={item.id}>{item.displayName}</option>)}
-            </select>
-          </label>
-          <label>요약 방식
+          <label>회의록 작성 방식
             <select value={value.summaryProvider} disabled={busy} onChange={(event) => void persist({ ...value, summaryProvider: event.target.value as ProcessingSettings['summaryProvider'] })}>
               {descriptors.filter((item) => item.stage === 'summary').map((item) => <option key={`${item.stage}-${item.id}`} value={item.id}>{item.displayName}</option>)}
             </select>
@@ -121,11 +136,11 @@ export function ProcessingProviderSettings({ settings }: { settings: SettingsApi
             </select>
           </label>}
         </div>
-        {openAiCapabilities && <PrivacyNotice title="OpenAI 처리"><p>OpenAI API 키를 사용하며 화자 분리를 지원합니다.</p></PrivacyNotice>}
+        {summary?.id === 'openai' && <PrivacyNotice title="OpenAI 요약"><p>음성은 이 Mac에서 변환하고, 변환된 대화 내용만 OpenAI로 전송합니다.</p></PrivacyNotice>}
         {modelManager && transcription !== undefined && <WhisperModelSettings settings={settings} modelId={value.localWhisperModel} descriptor={transcription} onAvailabilityChanged={refreshDescriptors} />}
         {cliStatus && summary !== undefined && <CodexCliStatus descriptor={summary} pending={pendingOperation === 'codex_refresh'} disabled={busy} onAvailabilityChanged={refreshCodexStatus} />}
-        {error !== null && <p role="alert" className="settings-alert">{error}</p>}
       </div>
-    </details>
+    </div>}
+    {error !== null && <p role="alert" className="settings-alert">{error}</p>}
   </section>
 }
