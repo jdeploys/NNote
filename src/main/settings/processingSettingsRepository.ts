@@ -12,16 +12,19 @@ const defaultProcessingProviderSettings: ProcessingProviderSettings = {
 
 interface ProcessingSettingsRepositoryOptions {
   readonly codexCliEnabled?: boolean
+  readonly localWhisperEnabled?: boolean
 }
 
 export class ProcessingSettingsRepository {
   private readonly codexCliEnabled: boolean
+  private readonly localWhisperEnabled: boolean
 
   constructor(
     private readonly database: Database.Database,
     options: ProcessingSettingsRepositoryOptions = {},
   ) {
     this.codexCliEnabled = options.codexCliEnabled ?? true
+    this.localWhisperEnabled = options.localWhisperEnabled ?? true
   }
 
   get(): ProcessingProviderSettings {
@@ -49,7 +52,10 @@ export class ProcessingSettingsRepository {
   }
 
   private reconcile(value: ProcessingProviderSettings): ProcessingProviderSettings {
-    if (this.codexCliEnabled || value.summaryProvider !== 'codex_cli') return value
-    return { ...value, summaryProvider: 'openai' }
+    return {
+      ...value,
+      transcriptionProvider: this.localWhisperEnabled ? value.transcriptionProvider : 'openai',
+      summaryProvider: this.codexCliEnabled ? value.summaryProvider : 'openai',
+    }
   }
 }

@@ -118,6 +118,30 @@ describe('processing settings repository', () => {
     database.close()
   })
 
+  it('forces OpenAI processing when the App Store build disables local Whisper and Codex', () => {
+    const database = openDatabase(temporaryDatabasePath())
+    const settings = new ProcessingSettingsRepository(database, {
+      codexCliEnabled: false,
+      localWhisperEnabled: false,
+    })
+
+    expect(settings.update({
+      transcriptionProvider: 'local_whisper',
+      summaryProvider: 'codex_cli',
+      localWhisperModel: 'small',
+    })).toEqual({
+      transcriptionProvider: 'openai',
+      summaryProvider: 'openai',
+      localWhisperModel: 'small',
+    })
+    expect(settings.get()).toEqual({
+      transcriptionProvider: 'openai',
+      summaryProvider: 'openai',
+      localWhisperModel: 'small',
+    })
+    database.close()
+  })
+
   it('validates processing provider settings at the IPC boundary', async () => {
     const database = openDatabase(temporaryDatabasePath())
     const settings = new ProcessingSettingsRepository(database)

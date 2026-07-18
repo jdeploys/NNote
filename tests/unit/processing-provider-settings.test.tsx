@@ -75,14 +75,16 @@ describe('processing provider settings visible outcomes', () => {
     expect(screen.queryByLabelText('회의록 작성 방식')).not.toBeInTheDocument()
   })
 
-  it('does not show Codex CLI when the build omits its provider descriptor', async () => {
-    const appStoreDescriptors = descriptors.filter((descriptor) => descriptor.id !== 'codex_cli')
+  it('disables local settings and omits Codex CLI for the App Store provider set', async () => {
+    const appStoreDescriptors = descriptors.filter((descriptor) => descriptor.id === 'openai')
     render(<ProcessingProviderSettingsView settings={settingsApi({
       listProcessingProviderDescriptors: vi.fn(async () => appStoreDescriptors),
     })} />)
-    await expand()
 
-    expect(screen.getByLabelText('회의록 작성 방식')).toHaveValue('openai')
+    expect(await screen.findByRole('radio', { name: /OpenAI/ })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /로컬 설정/ })).toBeDisabled()
+    expect(screen.getByText('App Store 버전에서는 지원하지 않습니다.')).toBeVisible()
+    expect(screen.queryByRole('region', { name: '로컬 설정' })).not.toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Codex CLI' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Codex CLI 상태' })).not.toBeInTheDocument()
   })

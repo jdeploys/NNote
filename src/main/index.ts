@@ -68,12 +68,13 @@ if (verificationRequest !== null) {
         const credentialStore = new KeyringCredentialStore()
         const processingSettings = new ProcessingSettingsRepository(database, {
           codexCliEnabled: !process.mas,
+          localWhisperEnabled: !process.mas,
         })
         const whisperModels = new WhisperModelManager(join(userDataDirectory, 'models', 'whisper'))
         const registry = new ProviderRegistry(
           [
             new OpenAiTranscriptionAdapter(new OpenAiGateway(credentialStore)),
-            new LocalWhisperTranscriptionAdapter({
+            ...(!process.mas ? [new LocalWhisperTranscriptionAdapter({
               resolveRuntimePaths: () => resolveLocalRuntimePaths({
                 isPackaged: app.isPackaged,
                 resourcesPath: process.resourcesPath,
@@ -87,7 +88,7 @@ if (verificationRequest !== null) {
               recordingsRoot: recordingsDirectory,
               temporaryRoot: app.getPath('temp'),
               runProcess: runOwnedProcess,
-            }),
+            })] : []),
           ],
           [
             new OpenAiSummaryAdapter(new OpenAiSummaryGateway(credentialStore)),

@@ -92,6 +92,7 @@ export function ProcessingProviderSettings({ settings }: { settings: SettingsApi
   const summary = descriptors.find((item) => item.stage === 'summary' && item.id === value.summaryProvider)
   const modelManager = transcription?.capabilities.includes('model_manager') === true
   const cliStatus = summary?.capabilities.includes('cli_status') === true
+  const localWhisperEnabled = descriptors.some((item) => item.stage === 'transcription' && item.id === 'local_whisper')
   const mode = value.transcriptionProvider === 'local_whisper' ? 'local' : 'openai'
   const chooseMode = (nextMode: 'openai' | 'local') => {
     if (nextMode === mode) return
@@ -112,9 +113,9 @@ export function ProcessingProviderSettings({ settings }: { settings: SettingsApi
         <input type="radio" name="processing-mode" value="openai" checked={mode === 'openai'} disabled={busy} onChange={() => chooseMode('openai')} />
         <span><strong>OpenAI</strong><small>API 키로 음성 변환과 회의록 작성을 처리합니다.</small></span>
       </label>
-      <label>
-        <input type="radio" name="processing-mode" value="local" checked={mode === 'local'} disabled={busy} onChange={() => chooseMode('local')} />
-        <span><strong>로컬 설정</strong><small>이 Mac의 Whisper 모델로 음성을 변환합니다.</small></span>
+      <label data-unavailable={!localWhisperEnabled || undefined}>
+        <input type="radio" name="processing-mode" value="local" checked={mode === 'local'} disabled={busy || !localWhisperEnabled} onChange={() => chooseMode('local')} />
+        <span><strong>로컬 설정</strong><small>{localWhisperEnabled ? '이 Mac의 Whisper 모델로 음성을 변환합니다.' : 'App Store 버전에서는 지원하지 않습니다.'}</small></span>
       </label>
     </div>
     {mode === 'openai' && <div className="openai-settings" role="region" aria-label="OpenAI 설정">
