@@ -203,6 +203,7 @@ describe('release package configuration', () => {
     ])
     expect(workflow).not.toContain('--config.mac.hardenedRuntime=false')
     expect(workflow).toContain('MAC_CSC_LINK')
+    expect(workflow).toContain('MAC_APP_SIGNING_IDENTITY')
     expect(workflow).toContain('TeamIdentifier')
     expect(workflow).toContain('--config.mac.notarize=true')
     expect(workflow).toContain('DEVELOPER ID SIGNED AND NOTARIZED')

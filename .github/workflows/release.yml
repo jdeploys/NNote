@@ -101,7 +101,8 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          CSC_NAME: 'Developer ID Application: CHANMI KIM (J3W2GDPJ7Y)'
+          CSC_NAME: 'CHANMI KIM (J3W2GDPJ7Y)'
+          MAC_APP_SIGNING_IDENTITY: 'Developer ID Application: CHANMI KIM (J3W2GDPJ7Y)'
           APPLE_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
