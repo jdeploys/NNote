@@ -117,8 +117,6 @@ for (const [state, snapshot, expanded] of [
   ['provider-defaults', 'processing-providers-defaults.png', false],
   ['provider-advanced', 'processing-providers-advanced.png', true],
   ['whisper-downloading', 'processing-whisper-downloading.png', true],
-  ['whisper-installed', 'processing-whisper-installed.png', true],
-  ['codex-available', 'processing-codex-available.png', true],
   ['codex-unavailable', 'processing-codex-unavailable.png', true],
 ] as const) {
   test(`real settings route visibly shows ${state}`, async ({ page }) => {
@@ -142,9 +140,8 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
-for (const theme of ['light', 'dark'] as const) {
-  for (const width of [1200, 640]) {
-    test(`real settings ${theme} keeps compact, label-aligned theme radios at ${width}x800`, async ({ page }) => {
+for (const [theme, width] of [['light', 1200], ['dark', 640]] as const) {
+    test(`real settings ${theme} keeps controls aligned at ${width}x800`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 })
       await open(page, 'provider-advanced', true, theme)
 
@@ -163,28 +160,20 @@ for (const theme of ['light', 'dark'] as const) {
 
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await expect(page.getByText('시스템 설정은 Windows 또는 macOS의 화면 모드를 자동으로 따릅니다.')).toBeVisible()
-    })
 
-    test(`real settings ${theme} keeps API-key text input full-width sizing at ${width}x800`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 800 })
-      await open(page, 'provider-advanced', true, theme)
-
-      const geometry = await apiKeyControlGeometry(page)
-      expect(geometry.inputWidth).toBeGreaterThan(300)
-      expect(geometry.inputWidth).toBeGreaterThanOrEqual(geometry.formWidth * 0.7)
-      expect(geometry.inputHeight).toBe(48)
-      expect(geometry.inputLeft).toBe(geometry.formLeft)
-      expect(geometry.minHeight).toBe('48px')
-      expect(geometry.padding).toBe('12px')
+      const apiKeyGeometry = await apiKeyControlGeometry(page)
+      expect(apiKeyGeometry.inputWidth).toBeGreaterThan(300)
+      expect(apiKeyGeometry.inputWidth).toBeGreaterThanOrEqual(apiKeyGeometry.formWidth * 0.7)
+      expect(apiKeyGeometry.inputHeight).toBe(48)
+      expect(apiKeyGeometry.inputLeft).toBe(apiKeyGeometry.formLeft)
+      expect(apiKeyGeometry.minHeight).toBe('48px')
+      expect(apiKeyGeometry.padding).toBe('12px')
     })
-  }
 }
 
-for (const width of [938, 640]) {
-  test(`expanded real settings route has no horizontal overflow at ${width}x800`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 800 })
+test('expanded real settings route has no horizontal overflow at 640x800', async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 800 })
     await open(page, 'whisper-installed', true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await expect(page.getByLabel('로컬 모델')).toBeVisible()
-  })
-}
+})

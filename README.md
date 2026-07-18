@@ -77,16 +77,16 @@ npm ci
 npm run dev
 ```
 
-주요 검증 명령:
+개발 중에는 변경 범위에 해당하는 테스트 파일만 직접 실행합니다.
 
 ```powershell
 npm run lint
 npm run typecheck
-npm test
-npm run test:visual
-npm run build
-npm run test:e2e
+npm test -- --run tests/unit/app-routing.test.tsx
+npx playwright test tests/visual/task10.visual.pw.ts --grep "template page"
 ```
+
+일반 CI는 `npm run test:ci`, 릴리스·배포 전 전체 검증은 `npm run test:release`를 사용합니다. 기능 문서용 스크린샷은 회귀 테스트와 분리된 `npm run docs:screenshots`로 생성합니다.
 
 `test:e2e`는 Electron 43 ABI에 맞춰 `better-sqlite3`를 재빌드한 뒤 실제 Electron 앱을 가짜 Chromium 마이크로 실행합니다. 이후 Node 기반 테스트를 실행하려면 다음 명령으로 Node ABI를 복원합니다.
 

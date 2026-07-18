@@ -10,50 +10,12 @@ permissions:
 
 jobs:
   desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.12.0
           cache: npm
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        if: runner.os == 'Windows'
-        with:
-          msystem: MINGW64
-          install: >-
-            base-devel
-            mingw-w64-x86_64-toolchain
-            nasm
       - run: npm ci
-      - run: npm run lint
-        if: runner.os == 'Windows'
-      - run: npm run typecheck
-        if: runner.os == 'Windows'
-      - run: npm test
-        if: runner.os == 'Windows'
-      - run: npm run build
-      - run: npm run test:e2e
-        if: runner.os == 'Windows'
-      - name: Build pinned Windows local runtime
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/build-local-runtime.ps1 -Arch x64 -FfmpegShell msys2
-      - name: Package and verify Windows (unsigned)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          npm run package:win:x64
-          node scripts/verify-package.mjs dist/win-unpacked
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: runner.os == 'Windows'
-        with:
-          name: nnote-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            dist/*.exe
-            dist/*-unpacked/**
-          if-no-files-found: ignore
+      - run: npm run test:ci

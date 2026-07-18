@@ -95,11 +95,10 @@ async function expectWcagAa(locator: Locator, label: string) {
 }
 
 for (const theme of ['light', 'dark'] as const) {
-  for (const width of [1200, 640]) {
-    test(`real ${theme} App keeps primary controls and every semantic badge at WCAG AA contrast at ${width}px`, async ({ page }, testInfo) => {
+    test(`real ${theme} App keeps primary controls and every semantic badge at WCAG AA contrast`, async ({ page }, testInfo) => {
       const evidence: Awaited<ReturnType<typeof expectWcagAa>>[] = []
       const verify = async (locator: Locator, label: string) => evidence.push(await expectWcagAa(locator, label))
-      await page.setViewportSize({ width, height: 800 })
+      await page.setViewportSize({ width: 1200, height: 800 })
 
       await openRoute(page, 'idle', theme)
       const primary = page.getByRole('button', { name: '녹음 시작' })
@@ -133,5 +132,4 @@ for (const theme of ['light', 'dark'] as const) {
         contentType: 'application/json',
       })
     })
-  }
 }

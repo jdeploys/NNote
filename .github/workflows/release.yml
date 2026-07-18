@@ -26,9 +26,7 @@ jobs:
             mingw-w64-x86_64-toolchain
             nasm
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
+      - run: npm run test:release
       - name: Build pinned Windows local runtime
         shell: pwsh
         run: |
@@ -79,9 +77,6 @@ jobs:
           node-version: 22.12.0
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
       - name: Build pinned macOS local runtime
         run: |
           set -euo pipefail

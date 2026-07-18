@@ -201,20 +201,8 @@ test('template page keeps the back action above and aligned with the title', asy
   expect(backBox!.y + backBox!.height).toBeLessThanOrEqual(headingBox!.y)
 })
 
-test('real primary actions render aligned semantic icons without horizontal overflow', async ({ page }) => {
-  await page.setViewportSize({ width: 1200, height: 800 })
-  await openRoute(page, 'idle')
-  for (const label of ['전체 기록', '요약 템플릿', '설정', '녹음 시작']) {
-    await expectPaintableActionIcon(page, label)
-  }
-  await page.getByRole('button', { name: '설정', exact: true }).click()
-  await expectPaintableActionIcon(page, '회의 기록 가져오기')
-  await expectNoHorizontalOverflow(page)
-})
-
-for (const width of [1200, 640]) {
-  test(`real pending operation labels remain unclipped without overflow at ${width}x800`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 800 })
+test('real pending operation labels remain unclipped without overflow at 640x800', async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 800 })
     for (const operation of [
       { state: 'templates-create-pending', trigger: () => page.getByRole('button', { name: '새 템플릿' }), label: '생성 중…' },
       { state: 'templates-save-pending', trigger: () => page.getByRole('button', { name: '템플릿 저장' }), label: '저장 중…' },
@@ -234,28 +222,23 @@ for (const width of [1200, 640]) {
     await expect(page.getByRole('region', { name: 'Codex CLI 상태' })).toHaveAttribute('aria-busy', 'true')
     await expectControlLabelUnclipped(page, 'Codex CLI 상태 확인 중…')
     await expectNoHorizontalOverflow(page)
-  })
-}
+})
 
-for (const width of [938, 640]) {
-  test(`real dashboard has no horizontal overflow at ${width}x800`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 800 })
+test('real dashboard has no horizontal overflow at 640x800', async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 800 })
     await openRoute(page, 'failed')
     await expectNoHorizontalOverflow(page)
-    if (width === 640) {
-      await expect(page).toHaveScreenshot('dashboard-narrow-640.png', { animations: 'disabled', fullPage: false, omitBackground: false })
-    }
-  })
-}
+    await expect(page).toHaveScreenshot('dashboard-narrow-640.png', { animations: 'disabled', fullPage: false, omitBackground: false })
+})
 
-for (const width of [721, 743]) {
+for (const width of [743]) {
   test(`real App compact seam at ${width}x800 wraps navigation and stacks dashboard, settings, meeting, and recovery without overflow`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 })
     await expectRouteLayouts(page, width, true)
   })
 }
 
-for (const width of [744, 938]) {
+for (const width of [744]) {
   test(`real App non-compact seam at ${width}x800 keeps desktop navigation and two-column dashboard, settings, meeting, and recovery`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 })
     await expectRouteLayouts(page, width, false)

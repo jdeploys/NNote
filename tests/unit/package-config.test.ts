@@ -98,14 +98,18 @@ describe('release package configuration', () => {
     expect(release).toContain('bash ./scripts/build-local-runtime.sh "${{ matrix.arch }}"')
   })
 
-  it('keeps Windows orchestration native and bridges only FFmpeg commands through MSYS2', () => {
+  it('keeps runtime builds, packaging, and full validation in the release workflow only', () => {
     const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
     const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
-    for (const workflow of [ci, release]) {
-      expect(workflow).toContain('shell: pwsh')
-      expect(workflow).toContain('./scripts/build-local-runtime.ps1 -Arch x64 -FfmpegShell msys2')
-      expect(workflow).toContain('npm run package:win:x64')
-    }
+    expect(ci).toContain('runs-on: windows-latest')
+    expect(ci).toContain('npm run test:ci')
+    expect(ci).not.toContain('build-local-runtime')
+    expect(ci).not.toContain('npm run package:')
+    expect(ci).not.toContain('npm run test:release')
+    expect(release).toContain('npm run test:release')
+    expect(release).toContain('shell: pwsh')
+    expect(release).toContain('./scripts/build-local-runtime.ps1 -Arch x64 -FfmpegShell msys2')
+    expect(release).toContain('npm run package:win:x64')
   })
 
   it('anchors the Windows release build log outside the temporary runtime tree', () => {
@@ -116,12 +120,10 @@ describe('release package configuration', () => {
     expect(ci).not.toContain('Tee-Object -LiteralPath $runtimeLog')
   })
 
-  it('installs NASM with the Windows toolchain while preserving optimized FFmpeg assembly', () => {
-    for (const name of ['ci.yml', 'release.yml']) {
-      const workflow = readFileSync(resolve('.github/workflows', name), 'utf8')
-      expect(workflow).toContain('mingw-w64-x86_64-toolchain')
-      expect(workflow).toMatch(/install:\s+>-\s+(?:.|\r|\n)*?\bnasm\b/)
-    }
+  it('installs NASM with the release Windows toolchain while preserving optimized FFmpeg assembly', () => {
+    const workflow = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
+    expect(workflow).toContain('mingw-w64-x86_64-toolchain')
+    expect(workflow).toMatch(/install:\s+>-\s+(?:.|\r|\n)*?\bnasm\b/)
     const script = readFileSync(resolve('scripts/build-local-runtime.ps1'), 'utf8')
     expect(script).not.toContain('--disable-x86asm')
   })
@@ -156,12 +158,11 @@ describe('release package configuration', () => {
     }
   })
 
-  it('keeps routine macOS CI to dependency installation and the application build', () => {
+  it('keeps routine CI platform-neutral and leaves macOS packaging to release jobs', () => {
     const ci = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')
     const release = readFileSync(resolve('.github/workflows/release.yml'), 'utf8')
     expect(ci).not.toContain('mac-visual-baseline:')
-    expect(ci).toContain("if: runner.os == 'Windows'")
-    expect(ci).toContain('run: npm run build')
+    expect(ci).not.toContain('macos-latest')
     expect(ci).not.toContain('Package and verify macOS')
     expect(release).not.toContain('processing-settings.visual.pw.ts')
     expect(release).not.toContain('visual-comparison-macos')
