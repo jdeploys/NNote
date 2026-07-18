@@ -13,7 +13,7 @@ import {
 } from '../../src/renderer/src/features/recording/mediaRecorderController'
 
 describe('RecordingPanel', () => {
-  afterEach(cleanup)
+  afterEach(() => { cleanup(); localStorage.clear() })
 
   it('keeps recording telemetry values fully visible at 1200x800', () => {
     const styles = readFileSync(resolve('src/renderer/src/styles/app.css'), 'utf8')
@@ -207,5 +207,21 @@ describe('RecordingPanel', () => {
     expect(screen.getByText('파트 2')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '일시정지' }))
     expect(controls.pause).toHaveBeenCalledOnce()
+  })
+
+  it('restores the last selected original audio policy after remounting', async () => {
+    const user = userEvent.setup()
+    const controls = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      discard: vi.fn(async () => undefined),
+    }
+    const first = render(<RecordingPanel controls={controls} onNavigate={vi.fn()} />)
+
+    await user.selectOptions(screen.getByLabelText('원본 오디오'), 'keep')
+    first.unmount()
+    render(<RecordingPanel controls={controls} onNavigate={vi.fn()} />)
+
+    expect(screen.getByLabelText('원본 오디오')).toHaveValue('keep')
   })
 })

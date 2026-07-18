@@ -31,6 +31,7 @@ interface RecordingPanelProps {
 }
 
 type PanelPhase = 'idle' | 'recording' | 'stop_pending' | 'discard_pending'
+const audioPolicyStorageKey = 'mineloa.recording.audioPolicy'
 
 const idleSnapshot: RecordingSnapshot = {
   phase: 'idle', meetingId: null, durationMs: 0, totalBytes: 0, warn: false,
@@ -42,6 +43,19 @@ function formatElapsed(durationMs: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
+function loadAudioPolicy(): AudioPolicy {
+  try {
+    const stored = globalThis.localStorage?.getItem(audioPolicyStorageKey)
+    return stored === 'keep' || stored === 'delete_after_processing' ? stored : 'delete_after_processing'
+  } catch {
+    return 'delete_after_processing'
+  }
+}
+
+function rememberAudioPolicy(value: AudioPolicy): void {
+  try { globalThis.localStorage?.setItem(audioPolicyStorageKey, value) } catch { /* use the current session value */ }
+}
+
 export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templates }: RecordingPanelProps) {
   const [phase, setPhase] = useState<PanelPhase>('idle')
   const [terminalFailure, setTerminalFailure] = useState<RecordingTerminalFailure | null>(null)
@@ -51,7 +65,7 @@ export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templat
   const [snapshot, setSnapshot] = useState(idleSnapshot)
   const [templateItems, setTemplateItems] = useState<SummaryTemplate[]>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState('default')
-  const [audioPolicy, setAudioPolicy] = useState<AudioPolicy>('delete_after_processing')
+  const [audioPolicy, setAudioPolicy] = useState<AudioPolicy>(loadAudioPolicy)
   const [microphones, setMicrophones] = useState<MicrophoneOption[]>([])
   const [microphoneDeviceId, setMicrophoneDeviceId] = useState('')
   const [farFieldMode, setFarFieldMode] = useState(true)
@@ -150,7 +164,7 @@ export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templat
         <div className="recording-options">
           <div className="recording-fields">
             {templates !== undefined && <label>요약 템플릿 <span className="recording-select-control"><select aria-label="요약 템플릿" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)}>{templateItems.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select><Icon name="down" size={20} /></span></label>}
-            <label>원본 오디오 <span className="recording-select-control"><select aria-label="원본 오디오" value={audioPolicy} onChange={(event) => setAudioPolicy(event.target.value as AudioPolicy)}><option value="delete_after_processing">처리 후 삭제</option><option value="keep">계속 보관</option></select><Icon name="down" size={20} /></span></label>
+            <label>원본 오디오 <span className="recording-select-control"><select aria-label="원본 오디오" value={audioPolicy} onChange={(event) => { const next = event.target.value as AudioPolicy; setAudioPolicy(next); rememberAudioPolicy(next) }}><option value="delete_after_processing">처리 후 삭제</option><option value="keep">계속 보관</option></select><Icon name="down" size={20} /></span></label>
             <label className="recording-microphone-field">마이크 <span className="recording-select-control"><select aria-label="마이크" value={microphoneDeviceId} onFocus={() => void refreshMicrophones()} onChange={(event) => setMicrophoneDeviceId(event.target.value)}><option value="">시스템 기본 마이크</option>{microphones.map((microphone) => <option key={microphone.deviceId} value={microphone.deviceId}>{microphone.label}</option>)}</select><Icon name="down" size={20} /></span></label>
             <div className="recording-quality-field">
               <span>녹음 품질</span>
