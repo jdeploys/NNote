@@ -52,6 +52,8 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.MAS_CERTIFICATE_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAS_CERTIFICATE_PASSWORD }}
+          CSC_INSTALLER_LINK: ${{ secrets.MAS_INSTALLER_CERTIFICATE_P12_BASE64 }}
+          CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.MAS_CERTIFICATE_PASSWORD }}
           CSC_NAME: Apple Distribution
           MAS_BUILD: 'true'
         run: |
