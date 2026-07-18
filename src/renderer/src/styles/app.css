@@ -1,5 +1,7 @@
 .app-shell { min-height: 100vh; background: var(--canvas); }
 .topbar { position: sticky; top: 0; z-index: 10; min-height: 64px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--surface-1) 92%, transparent); display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 8px 32px; backdrop-filter: blur(16px); }
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.topbar-quick-record { min-height: 40px; padding: 8px 14px; }
 .brand { min-height: 48px; border: 0; background: transparent; color: var(--ink); padding: 6px 0; display: inline-flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
 .brand-mark { width: 30px; height: 30px; flex: 0 0 auto; }
 .app-nav { display: flex; align-items: center; gap: 4px; }
@@ -283,6 +285,9 @@
   .topbar { position: static; min-height: 56px; padding: 10px 16px; gap: 10px; }
   .topbar nav { flex-wrap: wrap; justify-content: flex-end; }
   .topbar nav button { min-height: 36px; }
+  .topbar-actions { gap: 6px; }
+  .topbar-quick-record { width: 40px; min-height: 40px; padding: 0; }
+  .topbar-quick-record span { display: none; }
   .dashboard.page-container { grid-template-columns: minmax(0, 1fr); padding: 16px; }
   .new-meeting-card { min-height: 500px; }
   .meeting-search-dates { grid-template-columns: minmax(0, 1fr); }

@@ -39,6 +39,7 @@ export function App({
   const [screen, setScreen] = useState<Screen>('all')
   const [error, setError] = useState<string | null>(null)
   const [archiveNotice, setArchiveNotice] = useState<string | null>(null)
+  const [quickStartRequest, setQuickStartRequest] = useState(0)
   const routeHeading = useRef<HTMLHeadingElement>(null)
   const returnFocusKey = useRef<string | null>(null)
   const { preference, setPreference } = useThemePreference()
@@ -210,11 +211,12 @@ export function App({
 
   const activeNavigation = screen === 'templates' || screen === 'settings' ? screen : 'all'
 
-  return <AppShell active={activeNavigation} onNavigate={navigate}>
+  return <AppShell active={activeNavigation} onNavigate={navigate} onQuickRecord={() => { setScreen('all'); setQuickStartRequest((request) => request + 1) }}>
     <div hidden={screen !== 'all'}>
       <Dashboard
         meetings={meetings}
         recordingControls={recordingControls}
+        recordingStartRequest={quickStartRequest}
         templates={desktopApi.templates}
         onSearch={(input) => desktopApi.meetings.search(input)}
         onOpenMeeting={(id) => void openMeeting(id)}

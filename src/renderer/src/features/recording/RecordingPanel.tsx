@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AudioPolicy } from '../../../../shared/contracts/meeting'
 import type { SummaryTemplate, TemplatesApi } from '../../../../shared/contracts/template'
 import { InlineNotice } from '../../components/feedback/InlineNotice'
@@ -28,6 +28,7 @@ interface RecordingPanelProps {
   onNavigate(destination: 'settings'): void
   settingsFocusKey?: string
   templates?: TemplatesApi
+  startRequest?: number
 }
 
 type PanelPhase = 'idle' | 'recording' | 'stop_pending' | 'discard_pending'
@@ -56,7 +57,7 @@ function rememberAudioPolicy(value: AudioPolicy): void {
   try { globalThis.localStorage?.setItem(audioPolicyStorageKey, value) } catch { /* use the current session value */ }
 }
 
-export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templates }: RecordingPanelProps) {
+export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templates, startRequest }: RecordingPanelProps) {
   const [phase, setPhase] = useState<PanelPhase>('idle')
   const [terminalFailure, setTerminalFailure] = useState<RecordingTerminalFailure | null>(null)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
@@ -69,6 +70,7 @@ export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templat
   const [microphones, setMicrophones] = useState<MicrophoneOption[]>([])
   const [microphoneDeviceId, setMicrophoneDeviceId] = useState('')
   const [farFieldMode, setFarFieldMode] = useState(true)
+  const handledStartRequest = useRef(startRequest ?? 0)
 
   useEffect(() => controls.subscribe?.((next) => {
     setSnapshot(next)
@@ -95,7 +97,7 @@ export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templat
 
   useEffect(() => { void refreshMicrophones() }, [refreshMicrophones])
 
-  const start = async () => {
+  const start = useCallback(async () => {
     setBusy(true)
     setError(null)
     try {
@@ -110,7 +112,13 @@ export function RecordingPanel({ controls, onNavigate, settingsFocusKey, templat
     } finally {
       setBusy(false)
     }
-  }
+  }, [audioPolicy, controls, farFieldMode, microphoneDeviceId, selectedTemplateId])
+
+  useEffect(() => {
+    if (startRequest === undefined || startRequest === handledStartRequest.current) return
+    handledStartRequest.current = startRequest
+    if (phase === 'idle' && !busy) void start()
+  }, [busy, phase, start, startRequest])
 
   const togglePause = async () => {
     setBusy(true)

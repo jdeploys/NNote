@@ -142,8 +142,9 @@ describe('common UI semantics', () => {
 
   it('renders app navigation and reports native navigation actions', () => {
     const onNavigate = vi.fn()
+    const onQuickRecord = vi.fn()
     render(
-      <AppShell active="templates" onNavigate={onNavigate}>
+      <AppShell active="templates" onNavigate={onNavigate} onQuickRecord={onQuickRecord}>
         <main>콘텐츠</main>
       </AppShell>,
     )
@@ -162,6 +163,11 @@ describe('common UI semantics', () => {
     expect(brand.querySelector('.brand-mark')).toHaveAttribute('aria-hidden', 'true')
     fireEvent.click(brand)
     expect(onNavigate).toHaveBeenCalledWith('all')
+    const quickRecord = screen.getByRole('button', { name: '빠른 녹음 시작' })
+    expect(quickRecord).toHaveAttribute('data-variant', 'primary')
+    expect(quickRecord.querySelector('.ui-icon')).toBeVisible()
+    fireEvent.click(quickRecord)
+    expect(onQuickRecord).toHaveBeenCalledOnce()
   })
 
   it('connects page header actions and its forwarded heading ref', () => {

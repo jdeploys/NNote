@@ -12,6 +12,7 @@ import { meetingStatusLabel } from './meetingStatusLabel'
 interface DashboardProps {
   meetings: readonly PublicMeeting[]
   recordingControls: RecordingPanelControls
+  recordingStartRequest?: number
   onOpenMeeting(meetingId: string): void
   onNavigate(destination: 'all' | 'templates' | 'settings', originFocusKey?: string): void
   onSearch?(input: MeetingSearchInput): Promise<PublicMeeting[]>
@@ -53,7 +54,7 @@ function localDayEndExclusive(value: string): string {
   return date.toISOString()
 }
 
-export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNavigate, onSearch, templates }: DashboardProps) {
+export function Dashboard({ meetings, recordingControls, recordingStartRequest, onOpenMeeting, onNavigate, onSearch, templates }: DashboardProps) {
   const [query, setQuery] = useState('')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
@@ -129,6 +130,7 @@ export function Dashboard({ meetings, recordingControls, onOpenMeeting, onNaviga
         </header>
         <RecordingPanel
           controls={recordingControls}
+          startRequest={recordingStartRequest}
           templates={templates}
           settingsFocusKey="recording-settings"
           onNavigate={() => onNavigate('settings', 'recording-settings')}

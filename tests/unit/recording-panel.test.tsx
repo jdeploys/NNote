@@ -224,4 +224,22 @@ describe('RecordingPanel', () => {
 
     expect(screen.getByLabelText('원본 오디오')).toHaveValue('keep')
   })
+
+  it('starts with the current options when the header quick action is requested', async () => {
+    const controls = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      discard: vi.fn(async () => undefined),
+    }
+    const view = render(<RecordingPanel controls={controls} onNavigate={vi.fn()} startRequest={0} />)
+
+    await act(async () => view.rerender(<RecordingPanel controls={controls} onNavigate={vi.fn()} startRequest={1} />))
+
+    expect(controls.start).toHaveBeenCalledWith({
+      selectedTemplateId: 'default',
+      audioPolicy: 'delete_after_processing',
+      microphoneDeviceId: null,
+      farFieldMode: true,
+    })
+  })
 })
